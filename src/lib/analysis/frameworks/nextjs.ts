@@ -24,7 +24,7 @@ export function matchRouteTemplate(route: string, template: string): boolean {
   return true;
 }
 
-function createRouteEdges(context: FrameworkAnalysisContext): AppGraphEdge[] {
+function createRouteEdges(context: FrameworkAnalysisContext, analyzerId: string): AppGraphEdge[] {
   const edges: AppGraphEdge[] = [];
   const seen = new Set<string>();
 
@@ -32,16 +32,19 @@ function createRouteEdges(context: FrameworkAnalysisContext): AppGraphEdge[] {
     const sourceNode = context.nodes.get(`file:${parsed.path}`);
     if (!sourceNode || parsed.fetchPaths.length === 0) continue;
 
-    for (const { path } of parsed.fetchPaths) {
+    for (const fetchPath of parsed.fetchPaths) {
+      const path = fetchPath.path;
       if (!path.startsWith("/api/") && !path.startsWith("/api")) continue;
       const normalized = path.split("?")[0].replace(/\/$/, "") || "/api";
       const candidates = context.nodeIdByRoute.get(normalized) ?? [];
 
       let targetId: string | undefined = candidates[0];
+      let matchedRoute: string | undefined = targetId ? normalized : undefined;
       if (!targetId) {
         for (const [route, ids] of context.nodeIdByRoute) {
           if (route.startsWith("/api") && matchRouteTemplate(normalized, route)) {
             targetId = ids[0];
+            matchedRoute = route;
             break;
           }
         }
@@ -57,7 +60,21 @@ function createRouteEdges(context: FrameworkAnalysisContext): AppGraphEdge[] {
           target: targetId,
           type: "routes_to",
           confidence: 0.88,
-          metadata: { label: "routes_to", via: normalized },
+          metadata: {
+            label: "routes_to",
+            via: normalized,
+            evidence: [
+              {
+                path: fetchPath.range.path,
+                startLine: fetchPath.range.startLine,
+                endLine: fetchPath.range.endLine,
+                analyzerId,
+                ruleId: "nextjs.fetch-route-match",
+                kind: "inferred",
+                reason: `fetch("${path}") matched route ${matchedRoute ?? normalized}`,
+              },
+            ],
+          },
         });
       }
     }
@@ -91,7 +108,7 @@ export const nextjsAnalyzer: FrameworkAnalyzer = {
   },
   analyze(context: FrameworkAnalysisContext): FrameworkAnalysis {
     const result = emptyFrameworkAnalysis();
-    result.extraEdges = createRouteEdges(context);
+    result.extraEdges = createRouteEdges(context, this.id);
     return result;
   },
 };

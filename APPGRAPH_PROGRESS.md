@@ -1,6 +1,33 @@
 # AppGraph — Implementation Progress
 
-Resume file for the next coding agent. Last updated after the initial MVP implementation.
+Resume file for the next coding agent. Last updated after Roadmap **Batch 1**.
+
+## Roadmap execution
+
+The authoritative plan is `APPGRAPH_ROADMAP.md` (kept in-repo, statuses updated per batch).
+
+### Batch 1 — Analyzer foundation (DONE)
+- `LanguageParser` contract + `ParserRegistry`; TypeScript parser migrated behind
+  the registry; pipeline has no language-specific branches.
+- Normalized IR (`src/lib/analysis/ir/model.ts`): located symbols (function/method/
+  class/interface/const/component/hook/enum/type), imports, calls, JSX tags, route
+  handlers, environment reads — all with `IrSourceRange`.
+- Central analyzer registries (`src/lib/analysis/registries/`): parsers, frameworks,
+  integrations, data schemas. `DataSchemaAnalyzer` contract + registered Prisma
+  schema analyzer (`provider`, `models`, ranges) in `src/lib/analysis/data/`.
+- `GraphCapabilities` on the document + **Insights → Analysis coverage** UI.
+- `EdgeEvidence` (path/line/analyzer/rule/kind/reason) attached to every edge;
+  **Inspector → Evidence** with commit-pinned GitHub links.
+- Graph schema **1.1.0** (additive) + `docs/graph-schema.md`; analysis version
+  default now `0.2.0`.
+- Tests: parser registry (language-agnostic registration), IR, evidence on every
+  edge, capabilities, and a false-positive regression fixture
+  (`tests/fixtures/sample-negative`) proving unused imports, look-alike `db.user.create`
+  objects, doc strings and commented `process.env` never become semantic edges.
+
+### Batch 2 — next
+- AG-SYM-001..005: first-class symbol nodes, accurate local symbol resolution,
+  barrel/re-export resolver, call-graph confidence levels, symbol drill-down UI.
 
 ## Status
 
@@ -107,7 +134,8 @@ analysis → semantic architecture graph → interactive canvas.
 ## Verification status (last run)
 
 - `npm run typecheck` — clean.
-- `npm test` — 71 tests passed (8 files; live GitHub/manual tests skipped by default).
+- `npm test` — 91 tests passed (11 files, incl. parser-registry, IR, evidence and
+  negative-regression suites; live GitHub/manual tests skipped by default).
 - `npm run build` — succeeded (standalone output only when `NEXT_STANDALONE=1`, i.e. in Docker).
 - `npx playwright test` — 8/8 passed: landing (2), workspace interactions, advanced exploration
   (analytics/exports, hover card/legend/context menu, trace/impact/path/tour), mobile sheets,

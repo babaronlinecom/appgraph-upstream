@@ -1,4 +1,5 @@
 import type { GraphGroupId, RepositoryMetadata, RepositoryTree } from "@/lib/graph/model";
+import type { FileIR, IrExport, IrImport, IrSourceRange } from "./ir/model";
 
 export type FileCategory =
   | "page"
@@ -44,39 +45,15 @@ export interface ClassifiedFile {
   size?: number;
 }
 
-export interface ParsedImport {
-  specifier: string;
-  kind: "default" | "named" | "namespace" | "side-effect" | "type";
-  importedNames: string[];
-  localNames: string[];
-  typeOnly: boolean;
-  line: number;
-}
-
-export interface ParsedExport {
-  name: string;
-  kind: "function" | "class" | "const" | "component" | "hook" | "default" | "type" | "re-export";
-  line: number;
-}
-
-export interface ParsedFile {
-  path: string;
-  imports: ParsedImport[];
-  exports: ParsedExport[];
-  defaultExport?: ParsedExport;
-  components: string[];
-  hooks: string[];
-  functions: string[];
-  classes: string[];
-  jsxTags: Array<{ name: string; line: number }>;
-  calls: Array<{ name: string; line: number }>;
-  routeHandlers: Array<{ method: string; line: number }>;
-  envVars: string[];
-  fetchPaths: Array<{ path: string; line: number }>;
-  directives: { useClient: boolean; useServer: boolean };
-  usesJsx: boolean;
-  lines: string[];
-}
+/**
+ * Parser output = normalized Software IR. The historical names are kept as
+ * aliases so existing modules and tests continue to work while the codebase
+ * migrates to IR terminology.
+ */
+export type ParsedImport = IrImport;
+export type ParsedExport = IrExport;
+export type ParsedFile = FileIR;
+export type SourceRange = IrSourceRange;
 
 export interface IntegrationDefinition {
   id: string;
@@ -122,6 +99,8 @@ export interface RepositoryContext {
   parsed: Map<string, ParsedFile>;
   resolvedImports: Map<string, Map<string, string | null>>;
   integrations: DetectedIntegration[];
+  /** Deterministic data-schema detections (Prisma/Drizzle/SQL adapters). */
+  dataSchemas: import("./data/registry").DataSchemaDetection[];
   envVars: Map<string, string[]>;
   envExampleVars: string[];
   warnings: AnalysisWarningDraft[];

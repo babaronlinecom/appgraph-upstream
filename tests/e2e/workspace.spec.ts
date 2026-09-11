@@ -39,6 +39,10 @@ test.describe("analysis workspace", () => {
     await expect(inspector).toContainText("/dashboard");
     await expect(inspector).toContainText("src/app/dashboard/page.tsx");
 
+    // Evidence panel explains why relationships exist.
+    await expect(inspector.getByText("Evidence", { exact: true })).toBeVisible();
+    await expect(inspector).toContainText("typescript-ast");
+
     // GitHub source link is pinned to the analyzed commit.
     await expect(inspector.getByRole("link", { name: /Open on GitHub/ })).toHaveAttribute(
       "href",

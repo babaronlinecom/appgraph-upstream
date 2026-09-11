@@ -9,11 +9,14 @@ import {
   type RepositoryMetadata,
 } from "@/lib/graph/model";
 import { computeLayouts } from "@/lib/graph/layout/elk-layout";
+import { buildCapabilities } from "./capabilities";
 import { classifyFile } from "./file-classifier";
 import { detectRepositorySignals, parsePackageJson } from "./frameworks/registry";
 import { buildGraph } from "./graph-builder";
 import { findIntegrationForSpecifier } from "./integrations";
-import { parseSource } from "./parsers/ts-parser";
+import { detectLanguage } from "./languages";
+import { parserRegistry } from "./parsers/registry";
+import { analyzerRegistries } from "./registries";
 import { ImportResolver, parseTsConfigAliases, type PathAliasConfig } from "./resolvers/import-resolver";
 import { collectMetadataCandidates, mapWithConcurrency, selectFiles } from "./selection";
 import type {
@@ -91,7 +94,7 @@ function createStepTracker(onProgress?: (steps: AnalysisStep[]) => void) {
 }
 
 function analysisVersion(): string {
-  return process.env.APPGRAPH_ANALYSIS_VERSION?.trim() || "0.1.0";
+  return process.env.APPGRAPH_ANALYSIS_VERSION?.trim() || "0.2.0";
 }
 
 export function graphCacheKey(ownerRepo: string, commitSha: string): string {
@@ -318,7 +321,10 @@ export async function analyzeRepository(options: AnalyzeOptions): Promise<AppGra
     tracker.start("parse");
     const classified = new Map<string, ClassifiedFile>();
     const parsed = new Map<string, ParsedFile>();
-    let parseFailures = 0;
+    const parsedLanguages = new Set<string>();
+    const parserIds = new Set<string>();
+    let unsupportedFiles = 0;
+    const parserFailures: Array<{ path: string; message: string }> = [];
 
     for (const [path, content] of fetched) {
       if (!/\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/i.test(path)) continue;
@@ -331,17 +337,55 @@ export async function analyzeRepository(options: AnalyzeOptions): Promise<AppGra
       const content = fetched.get(path);
       if (content === undefined) continue;
       if (Buffer.byteLength(content, "utf8") > limits.maxFileBytes) continue;
+      // Parser resolution is language-agnostic: the pipeline only knows the
+      // registry contract, never a specific parser.
+      const parser = parserRegistry.getForPath(path);
+      if (!parser) {
+        unsupportedFiles += 1;
+        continue;
+      }
+      const language = detectLanguage(path) ?? parser.capabilities.languages[0];
+      if (!language) {
+        unsupportedFiles += 1;
+        continue;
+      }
+      const extension = `.${path.split(".").pop()?.toLowerCase() ?? ""}`;
       try {
-        parsed.set(path, parseSource(path, content));
-      } catch {
-        parseFailures += 1;
+        const result = parser.parse({ path, content, language, extension });
+        parsed.set(path, result.file);
+        parserIds.add(parser.id);
+        parsedLanguages.add(language);
+        for (const diagnostic of result.diagnostics) {
+          warnings.push({
+            code: diagnostic.code,
+            severity: diagnostic.severity,
+            message: diagnostic.message,
+            detail: diagnostic.path,
+          });
+        }
+      } catch (error) {
+        parserFailures.push({
+          path,
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
     }
-    if (parseFailures > 0) {
+    if (unsupportedFiles > 0) {
       warnings.push({
-        code: "PARSE_PARTIAL",
+        code: "LANGUAGE_UNSUPPORTED",
+        severity: "info",
+        message: `${unsupportedFiles} source file(s) use a language without a registered parser and were skipped.`,
+      });
+    }
+    if (parserFailures.length > 0) {
+      warnings.push({
+        code: "PARSER_FAILED",
         severity: "warning",
-        message: `${parseFailures} file(s) could not be parsed. They are excluded from the graph.`,
+        message: `${parserFailures.length} file(s) could not be parsed and are excluded from the graph.`,
+        detail: parserFailures
+          .slice(0, 3)
+          .map((failure) => `${failure.path}: ${failure.message}`)
+          .join("; "),
       });
     }
     tracker.done("parse", `${parsed.size} files parsed`);
@@ -397,8 +441,18 @@ export async function analyzeRepository(options: AnalyzeOptions): Promise<AppGra
     ];
     tracker.done("resolve-imports", `${resolvedImports.size} modules · ${integrations.length} integrations`);
 
+    // --- Data schema detection (Prisma/… adapters) ---
+    const dataSchemas = analyzerRegistries.dataSchemas.analyze({
+      files: fetched,
+      paths: [...fetched.keys()],
+    });
+
     // --- Graph ---
     tracker.start("graph");
+    const hasHttpSurface =
+      [...classified.values()].some((file) => file.category === "api") ||
+      [...parsed.values()].some((file) => file.fetchPaths.length > 0);
+
     const context: RepositoryContext = {
       metadata,
       commitSha: commitSha || tree.sha,
@@ -419,6 +473,7 @@ export async function analyzeRepository(options: AnalyzeOptions): Promise<AppGra
       parsed,
       resolvedImports,
       integrations,
+      dataSchemas,
       envVars: new Map(),
       envExampleVars,
       warnings,
@@ -454,6 +509,13 @@ export async function analyzeRepository(options: AnalyzeOptions): Promise<AppGra
       nodes: built.nodes,
       edges: built.edges,
       warnings: built.warnings,
+      capabilities: buildCapabilities({
+        languages: parsedLanguages,
+        parserIds,
+        signals,
+        dataSchemas,
+        hasHttpSurface,
+      }),
       stats: {
         treeEntries: tree.entries.length,
         sourceFiles: selection.totalSourceCount,

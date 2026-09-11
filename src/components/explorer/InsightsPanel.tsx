@@ -16,15 +16,26 @@ import {
 import { useWorkspace } from "@/features/workspace/store";
 import { connectionCounts } from "@/features/workspace/selectors";
 import { detectFlows } from "@/features/workspace/trace";
+import { languageLabel } from "@/lib/analysis/languages";
 import { NODE_TYPE_META } from "@/components/canvas/node-meta";
-import type { AppGraphNode } from "@/lib/graph/model";
+import type { AppGraphNode, GraphCapabilities } from "@/lib/graph/model";
+
+const FRAMEWORK_LABELS: Record<string, string> = {
+  "nextjs-app": "Next.js App Router",
+  "nextjs-pages": "Next.js Pages Router",
+  react: "React",
+  node: "Node.js",
+  generic: "Generic JS/TS",
+};
 
 function Section({
   title,
+  hint,
   action,
   children,
 }: {
   title: string;
+  hint?: string;
   action?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -34,6 +45,7 @@ function Section({
         <span className="ag-section-label">{title}</span>
         {action}
       </div>
+      {hint ? <p className="-mt-1 mb-2 text-2xs leading-4 text-ink-muted">{hint}</p> : null}
       {children}
     </section>
   );
@@ -46,6 +58,20 @@ function Stat({ label, value }: { label: string; value: number | string }) {
       <div className="text-2xs uppercase tracking-wide text-ink-muted">{label}</div>
     </div>
   );
+}
+
+function CoverageRow({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
+  return (
+    <div className="flex items-start gap-2">
+      <span className="w-[96px] shrink-0 text-ink-muted">{label}</span>
+      <span className={muted ? "text-ink-muted" : "text-ink-secondary"}>{value}</span>
+    </div>
+  );
+}
+
+function coverageList(values: string[], labels?: Record<string, string>): string {
+  if (values.length === 0) return "none detected";
+  return values.map((value) => labels?.[value] ?? value).join(", ");
 }
 
 function truncate(value: string, max: number): string {
@@ -94,6 +120,7 @@ export function InsightsPanel() {
 
   if (!graph) return null;
   const stats = graph.stats;
+  const capabilities = graph.capabilities as GraphCapabilities | undefined;
   const maxHub = Math.max(1, ...hubs.map((node) => counts.get(node.id) ?? 0));
 
   return (
@@ -111,6 +138,60 @@ export function InsightsPanel() {
           <Stat label="External" value={stats.externalServices} />
         </div>
       </Section>
+
+      {capabilities ? (
+        <Section
+          title="Analysis coverage"
+          hint="What the analyzer actually understood — nothing is shown unless it was proven"
+        >
+          <div className="space-y-1 text-2xs">
+            <CoverageRow
+              label="Languages"
+              value={coverageList(capabilities.languages, { typescript: "TypeScript", javascript: "JavaScript" })}
+            />
+            <CoverageRow label="Frameworks" value={coverageList(capabilities.frameworks, FRAMEWORK_LABELS)} />
+            <CoverageRow
+              label="Data schemas"
+              value={
+                capabilities.databaseSchemas.length > 0
+                  ? capabilities.databaseSchemas.join(", ")
+                  : "no schema analyzer matched"
+              }
+              muted={capabilities.databaseSchemas.length === 0}
+            />
+            <CoverageRow
+              label="APIs"
+              value={coverageList(capabilities.apiProtocols, { http: "HTTP" })}
+              muted={capabilities.apiProtocols.length === 0}
+            />
+            <CoverageRow
+              label="Async"
+              value={capabilities.asyncSystems.length > 0 ? capabilities.asyncSystems.join(", ") : "no adapters yet"}
+              muted
+            />
+            <CoverageRow
+              label="Infrastructure"
+              value={capabilities.infrastructure.length > 0 ? capabilities.infrastructure.join(", ") : "not analyzed yet"}
+              muted
+            />
+            <CoverageRow
+              label="Symbols"
+              value={
+                capabilities.symbolResolution === "full"
+                  ? "full call resolution"
+                  : capabilities.symbolResolution === "partial"
+                    ? "imports resolved · calls unresolved"
+                    : "not available"
+              }
+            />
+            <CoverageRow
+              label="Registered"
+              value={`${capabilities.parsers.length} parser(s) · ${capabilities.dataSchemaAnalyzers.length} schema analyzer(s) · ${capabilities.integrations} integrations`}
+              muted
+            />
+          </div>
+        </Section>
+      ) : null}
 
       <Section
         title={`Flows · ${flows.length}`}

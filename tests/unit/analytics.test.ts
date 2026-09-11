@@ -90,6 +90,18 @@ const graph: AppGraphDocument = {
     cacheHit: false,
   },
   layouts: createEmptyLayouts(),
+  capabilities: {
+    languages: ["typescript"],
+    frameworks: ["nextjs-app"],
+    databaseSchemas: [],
+    dataSchemaAnalyzers: [],
+    apiProtocols: ["http"],
+    asyncSystems: [],
+    infrastructure: [],
+    symbolResolution: "partial",
+    parsers: ["typescript-ast"],
+    integrations: 0,
+  },
   generatedAt: new Date(0).toISOString(),
 };
 

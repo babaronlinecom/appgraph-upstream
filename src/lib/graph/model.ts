@@ -69,6 +69,33 @@ export interface AppGraphSourceRef {
   endLine?: number;
 }
 
+/** How a relationship was established. */
+export type EdgeEvidenceKind = "exact" | "resolved" | "inferred";
+
+/**
+ * Provenance for a semantic relationship. Every edge should be explainable:
+ * which file and line proved it, which analyzer produced it and under which
+ * rule. This is the basis for the Inspector "Evidence" section.
+ */
+export interface EdgeEvidence {
+  path: string;
+  startLine?: number;
+  endLine?: number;
+  symbol?: string;
+  analyzerId: string;
+  ruleId: string;
+  kind: EdgeEvidenceKind;
+  reason?: string;
+}
+
+export interface NodeSymbolInfo {
+  name: string;
+  kind: string;
+  line: number;
+  endLine?: number;
+  exported?: boolean;
+}
+
 export interface AppGraphNode {
   id: string;
   type: GraphNodeType;
@@ -93,6 +120,7 @@ export interface AppGraphNodeMetadata {
   imports?: string[];
   exports?: string[];
   envVars?: string[];
+  symbols?: NodeSymbolInfo[];
   usageCount?: number;
   description?: string;
   snippet?: string;
@@ -118,6 +146,7 @@ export interface AppGraphEdgeMetadata {
   via?: string;
   envVars?: string[];
   methods?: string[];
+  evidence?: EdgeEvidence[];
   [key: string]: unknown;
 }
 
@@ -172,6 +201,25 @@ export interface GraphStats {
   cacheHit: boolean;
 }
 
+/**
+ * What the analyzer actually understood for this repository. Reported honestly
+ * so users can see coverage instead of silently missing data.
+ */
+export interface GraphCapabilities {
+  languages: string[];
+  frameworks: string[];
+  /** Detected schema formats, e.g. "prisma". */
+  databaseSchemas: string[];
+  /** Registered schema analyzer ids, e.g. "prisma-schema". */
+  dataSchemaAnalyzers: string[];
+  apiProtocols: string[];
+  asyncSystems: string[];
+  infrastructure: string[];
+  symbolResolution: "full" | "partial" | "none";
+  parsers: string[];
+  integrations: number;
+}
+
 export interface AppGraphDocument {
   schemaVersion: string;
   analysisVersion: string;
@@ -183,6 +231,7 @@ export interface AppGraphDocument {
   warnings: GraphWarning[];
   stats: GraphStats;
   layouts: Record<GraphGranularity, GraphLayout>;
+  capabilities: GraphCapabilities;
   generatedAt: string;
 }
 
@@ -236,7 +285,14 @@ export interface RepositoryFile {
   sha?: string;
 }
 
-export const GRAPH_SCHEMA_VERSION = "1.0.0";
+/**
+ * Schema history:
+ * - 1.0.0 — initial public document shape.
+ * - 1.1.0 — additive: `capabilities`, edge evidence (`metadata.evidence`),
+ *   node symbol info (`metadata.symbols`). Backward compatible: older readers
+ *   ignore the new fields. See docs/graph-schema.md.
+ */
+export const GRAPH_SCHEMA_VERSION = "1.1.0";
 
 /** Fixed canvas node dimensions shared by the layout engine and the UI. */
 export const NODE_WIDTH = 252;

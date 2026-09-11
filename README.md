@@ -49,6 +49,15 @@ no LLM, no code execution, no `npm install` of the analyzed repository.
   `uses`, `imports`, `depends_on`.
 - Four granularities: **Product → Architecture → Modules → Files**.
 
+### 🔍 Trust through evidence
+- Every relationship carries provenance: source file, line range, analyzer id, rule id and
+  how it was established (`exact` / `resolved` / `inferred`) with a human-readable reason.
+- The Inspector **Evidence** panel links each record to the exact GitHub line pinned to the
+  analyzed commit, so you can always answer *"why are these two connected?"*.
+- No invented links: unsupported constructs stay unsupported and are reported honestly in
+  **Insights → Analysis coverage** (what the analyzer actually understood).
+- Graph schema and rule ids are documented in [docs/graph-schema.md](docs/graph-schema.md).
+
 ### 🗺️ Architecture intelligence
 - **Trace flows** (`T`) — animated, step-by-step playback of what a page/API/service leads to,
   with a camera that follows each hop.

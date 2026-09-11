@@ -205,6 +205,72 @@ describe("fixture repository analysis", () => {
     expect(Array.isArray(cycles)).toBe(true);
   });
 
+  it("carries source evidence on every relationship", () => {
+    expect(document.edges.length).toBeGreaterThan(0);
+    for (const candidate of document.edges) {
+      const evidence = candidate.metadata?.evidence;
+      expect(Array.isArray(evidence), `edge ${candidate.id} has evidence`).toBe(true);
+      expect(evidence!.length).toBeGreaterThan(0);
+      for (const entry of evidence!) {
+        expect(entry.path.length).toBeGreaterThan(0);
+        expect(entry.analyzerId.length).toBeGreaterThan(0);
+        expect(entry.ruleId.length).toBeGreaterThan(0);
+        expect(["exact", "resolved", "inferred"]).toContain(entry.kind);
+      }
+    }
+  });
+
+  it("explains renders, reads and route relationships with the right rules and lines", () => {
+    const dashboard = nodeByPath("src/app/dashboard/page.tsx")!;
+    const projectList = nodeByPath("src/components/ProjectList.tsx")!;
+    const renders = edge(dashboard.id, projectList.id, "renders")!;
+    const renderEvidence = renders.metadata?.evidence?.[0];
+    expect(renderEvidence?.ruleId).toBe("react.jsx-usage");
+    expect(renderEvidence?.path).toBe("src/app/dashboard/page.tsx");
+    expect(renderEvidence?.startLine).toBeGreaterThan(0);
+
+    const service = nodeByPath("src/services/project-service.ts")!;
+    const database = nodeByPath("src/lib/db.ts")!;
+    const reads = edge(service.id, database.id, "reads")!;
+    const readEvidence = reads.metadata?.evidence?.[0];
+    expect(readEvidence?.ruleId).toBe("db.operation.classify");
+    expect(readEvidence?.kind).toBe("inferred");
+    expect(readEvidence?.reason).toContain("findMany");
+
+    const api = nodeByPath("src/app/api/projects/route.ts")!;
+    const routeEdge = edge(dashboard.id, api.id, "routes_to")!;
+    const routeEvidence = routeEdge.metadata?.evidence?.[0];
+    expect(routeEvidence?.ruleId).toBe("nextjs.fetch-route-match");
+    expect(routeEvidence?.kind).toBe("inferred");
+    expect(routeEvidence?.path).toBe("src/app/dashboard/page.tsx");
+  });
+
+  it("attributes the Prisma datasource provider as evidence for the database link", () => {
+    const prisma = document.nodes.find((node) => node.id === "orm:prisma")!;
+    const database = document.nodes.find((node) => node.id === "db:postgresql")!;
+    const link = edge(prisma.id, database.id, "uses")!;
+    const evidence = link.metadata?.evidence?.[0];
+    expect(evidence?.path).toBe("prisma/schema.prisma");
+    expect(evidence?.ruleId).toBe("prisma.datasource-provider");
+    expect(evidence?.kind).toBe("exact");
+    expect(database.source?.path).toBe("prisma/schema.prisma");
+    expect(database.source?.startLine).toBeGreaterThan(0);
+  });
+
+  it("reports analysis capabilities honestly", () => {
+    expect(document.schemaVersion).toBe("1.1.0");
+    expect(document.capabilities.languages).toContain("typescript");
+    expect(document.capabilities.frameworks).toContain("nextjs-app");
+    expect(document.capabilities.databaseSchemas).toContain("prisma");
+    expect(document.capabilities.dataSchemaAnalyzers).toContain("prisma-schema");
+    expect(document.capabilities.parsers).toContain("typescript-ast");
+    expect(document.capabilities.apiProtocols).toContain("http");
+    expect(document.capabilities.asyncSystems).toEqual([]);
+    expect(document.capabilities.infrastructure).toEqual([]);
+    expect(document.capabilities.symbolResolution).toBe("partial");
+    expect(document.capabilities.integrations).toBeGreaterThan(0);
+  });
+
   function apiNode() {
     return document.nodes.find((node) => node.type === "api");
   }

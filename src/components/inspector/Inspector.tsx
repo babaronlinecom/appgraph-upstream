@@ -94,6 +94,11 @@ export function Inspector() {
     return graph.nodes.find((candidate) => candidate.id === state.selectedNodeId);
   }, [graph, state.selectedNodeId]);
 
+  const nodeById = useMemo(
+    () => new Map((graph?.nodes ?? []).map((candidate) => [candidate.id, candidate])),
+    [graph],
+  );
+
   if (!graph || !node) return null;
 
   const meta = NODE_TYPE_META[node.type] ?? NODE_TYPE_META.module;
@@ -108,6 +113,31 @@ export function Inspector() {
   const exportsList = Array.isArray(node.metadata.exports) ? (node.metadata.exports as string[]) : [];
   const envVars = Array.isArray(node.metadata.envVars) ? (node.metadata.envVars as string[]) : [];
   const methods = Array.isArray(node.metadata.methods) ? (node.metadata.methods as string[]) : [];
+  const symbolInfos = Array.isArray(node.metadata.symbols)
+    ? (node.metadata.symbols as Array<{
+        name: string;
+        kind: string;
+        line: number;
+        endLine?: number;
+        exported?: boolean;
+      }>)
+    : [];
+  const evidenceRows = [
+    ...incomingSorted.flatMap((candidate) =>
+      (candidate.metadata?.evidence ?? []).map((evidence) => ({
+        edge: candidate,
+        direction: "in" as const,
+        evidence,
+      })),
+    ),
+    ...outgoingSorted.flatMap((candidate) =>
+      (candidate.metadata?.evidence ?? []).map((evidence) => ({
+        edge: candidate,
+        direction: "out" as const,
+        evidence,
+      })),
+    ),
+  ].slice(0, 12);
 
   const close = () => {
     dispatch({ type: "ui/inspector", open: false });
@@ -258,6 +288,111 @@ export function Inspector() {
             </p>
           ) : null}
         </Section>
+
+        <Section title="Evidence" count={evidenceRows.length}>
+          <p className="mb-2 text-2xs leading-4 text-ink-muted">
+            Provenance of the relationships touching this entity: which file and line proved each one.
+          </p>
+          {evidenceRows.length === 0 ? (
+            <p className="text-2xs text-ink-muted">No recorded evidence for this entity yet.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {evidenceRows.map((row, index) => {
+                const otherId = row.direction === "in" ? row.edge.source : row.edge.target;
+                const other = nodeById.get(otherId);
+                const edgeMeta = EDGE_TYPE_META[row.edge.type];
+                const sourceUrl = buildGitHubFileUrl(
+                  { owner: graph.repository.owner, repo: graph.repository.name },
+                  graph.commitSha,
+                  row.evidence.path,
+                  row.evidence.startLine,
+                );
+                const kindTone =
+                  row.evidence.kind === "exact"
+                    ? "text-success"
+                    : row.evidence.kind === "resolved"
+                      ? "text-accent"
+                      : "text-warning";
+                return (
+                  <a
+                    key={`${row.edge.id}-${index}`}
+                    href={sourceUrl}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="block rounded-md border border-line bg-elevated/40 px-2 py-1.5 transition-colors duration-180 hover:border-line-strong"
+                    title={`Open ${row.evidence.path}:${row.evidence.startLine ?? 1}`}
+                  >
+                    <div className="flex items-center gap-1.5 text-2xs">
+                      {row.direction === "in" ? (
+                        <ArrowDownLeft size={10} style={{ color: edgeMeta.color }} aria-hidden />
+                      ) : (
+                        <ArrowUpRight size={10} style={{ color: edgeMeta.color }} aria-hidden />
+                      )}
+                      <span className="font-mono" style={{ color: edgeMeta.color }}>
+                        {edgeMeta.label}
+                      </span>
+                      <span className="text-ink-muted">{row.direction === "in" ? "from" : "to"}</span>
+                      <span className="truncate text-ink-secondary">{other?.label ?? otherId}</span>
+                      <span className="ml-auto shrink-0 font-mono text-ink-muted">
+                        {Math.round(row.edge.confidence * 100)}%
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-1.5 text-2xs">
+                      <span className={`font-mono uppercase tracking-wide ${kindTone}`}>
+                        {row.evidence.kind}
+                      </span>
+                      <span className="truncate font-mono text-ink-muted">
+                        {row.evidence.path}
+                        {row.evidence.startLine ? `:${row.evidence.startLine}` : ""}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 truncate text-2xs text-ink-muted">
+                      {row.evidence.reason ?? row.evidence.ruleId} · {row.evidence.analyzerId}
+                    </div>
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </Section>
+
+        {symbolInfos.length > 0 ? (
+          <Section title="Symbols" count={symbolInfos.length}>
+            <ul className="space-y-0.5">
+              {symbolInfos.map((symbol) => (
+                <li key={`${symbol.name}-${symbol.line}`}>
+                  <a
+                    href={buildGitHubFileUrl(
+                      { owner: graph.repository.owner, repo: graph.repository.name },
+                      graph.commitSha,
+                      node.path ?? "",
+                      symbol.line,
+                    )}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-elevated"
+                    title={`${node.path}:${symbol.line}`}
+                  >
+                    <span
+                      className="h-1 w-1 shrink-0 rounded-full"
+                      style={{ background: meta.color }}
+                      aria-hidden
+                    />
+                    <span className="min-w-0 truncate font-mono text-2xs text-ink-secondary">
+                      {symbol.name}
+                    </span>
+                    <span className="shrink-0 rounded border border-line px-1 text-2xs uppercase tracking-wide text-ink-muted">
+                      {symbol.kind}
+                    </span>
+                    <span className="ml-auto shrink-0 font-mono text-2xs text-ink-muted">
+                      L{symbol.line}
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        ) : null}
 
         <Section title="Incoming" count={incomingSorted.length}>
           {incomingSorted.length === 0 ? (

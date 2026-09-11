@@ -82,6 +82,11 @@ async function main(): Promise<void> {
   console.error(
     `▸ health: avg links ${health.avgOutgoing.toFixed(1)} · orphans ${health.orphanCount} · cycles ${cycles.length} · confidence ${Math.round(health.avgConfidence * 100)}%`,
   );
+  console.error(
+    `▸ coverage: languages ${document.capabilities.languages.join(", ")} · frameworks ${
+      document.capabilities.frameworks.join(", ") || "none"
+    } · schemas ${document.capabilities.databaseSchemas.join(", ") || "none"} · symbol resolution ${document.capabilities.symbolResolution}`,
+  );
   if (flows.length > 0) {
     console.error("▸ key flows:");
     for (const flow of flows.slice(0, 5)) {
@@ -115,6 +120,7 @@ async function main(): Promise<void> {
           repository: document.repository.fullName,
           commitSha: document.commitSha,
           stats: document.stats,
+          capabilities: document.capabilities,
           health,
           cycles: cycles.map((cycle) => cycle.nodeIds),
           flows: flows.map((flow) => ({ title: flow.title, nodeIds: flow.nodeIds })),

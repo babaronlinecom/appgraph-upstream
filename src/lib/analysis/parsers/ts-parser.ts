@@ -1,5 +1,19 @@
 import ts from "typescript";
-import type { ParsedExport, ParsedFile, ParsedImport } from "../types";
+import type { LanguageId } from "../languages";
+import type {
+  FileIR,
+  IrCall,
+  IrEnvRead,
+  IrExport,
+  IrExportKind,
+  IrFetchPath,
+  IrImport,
+  IrJsxTag,
+  IrRouteHandler,
+  IrSourceRange,
+  IrSymbol,
+  IrSymbolKind,
+} from "../ir/model";
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 
@@ -8,6 +22,10 @@ const JSX_KINDS = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.JsxSelfClosingElement,
   ts.SyntaxKind.JsxFragment,
 ]);
+
+const MAX_SYMBOLS_PER_FILE = 400;
+const MAX_CALLS_PER_FILE = 2_000;
+const MAX_ENV_READS_PER_FILE = 200;
 
 function scriptKindFor(path: string): ts.ScriptKind {
   const lower = path.toLowerCase();
@@ -44,15 +62,6 @@ function containsJsx(node: ts.Node): boolean {
   return found;
 }
 
-function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
-  return (
-    ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node)
-  );
-}
-
 function isComponentName(name: string): boolean {
   return /^[A-Z][A-Za-z0-9_]*$/.test(name);
 }
@@ -83,155 +92,73 @@ function textOfExpression(node: ts.Expression): string | null {
   return null;
 }
 
-function collectEnvVars(node: ts.Node, sink: Set<string>): void {
-  if (ts.isPropertyAccessExpression(node)) {
-    // process.env.NAME
-    if (
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "process" &&
-      node.expression.name.text === "env"
-    ) {
-      sink.add(node.name.text);
-    }
-  }
-  if (ts.isElementAccessExpression(node)) {
-    const argument = node.argumentExpression;
-    if (
-      argument &&
-      ts.isStringLiteralLike(argument) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "process" &&
-      node.expression.name.text === "env"
-    ) {
-      sink.add(argument.text);
-    }
-  }
-  // const { FOO, BAR } = process.env
-  if (ts.isVariableDeclaration(node) && node.initializer && ts.isPropertyAccessExpression(node.initializer)) {
-    const initializer = node.initializer;
-    if (
-      ts.isIdentifier(initializer.expression) &&
-      initializer.expression.text === "process" &&
-      initializer.name.text === "env" &&
-      ts.isObjectBindingPattern(node.name)
-    ) {
-      for (const element of node.name.elements) {
-        if (ts.isIdentifier(element.name) && !element.propertyName) {
-          sink.add(element.name.text);
-        } else if (element.propertyName && ts.isIdentifier(element.propertyName)) {
-          sink.add(element.propertyName.text);
-        }
-      }
-    }
-  }
-  ts.forEachChild(node, (child) => collectEnvVars(child, sink));
-}
-
-function collectFetchPaths(node: ts.Node, sink: Array<{ path: string; line: number }>): void {
-  if (ts.isCallExpression(node)) {
-    const calleeText = textOfExpression(node.expression);
-    const isFetch = calleeText === "fetch" || calleeText === "window.fetch" || calleeText === "globalThis.fetch";
-    const isHttpClient =
-      calleeText !== null &&
-      /^(axios|ky|got|superagent)(\.(get|post|put|patch|delete|head|require))?$/.test(calleeText.split("(")[0]);
-    if ((isFetch || isHttpClient) && node.arguments.length > 0) {
-      const argument = node.arguments[0];
-      let value: string | null = null;
-      if (ts.isStringLiteralLike(argument)) {
-        value = argument.text;
-      } else if (ts.isTemplateExpression(argument) && argument.templateSpans.length === 1) {
-        value = argument.head.text;
-      } else if (ts.isNoSubstitutionTemplateLiteral(argument)) {
-        value = argument.text;
-      }
-      if (value) {
-        const line = node.getSourceFile().getLineAndCharacterOfPosition(node.getStart()).line + 1;
-        sink.push({ path: value, line });
-      }
-    }
-  }
-  ts.forEachChild(node, (child) => collectFetchPaths(child, sink));
-}
-
-function collectCalls(node: ts.Node, sink: Array<{ name: string; line: number }>): void {
-  if (ts.isCallExpression(node)) {
-    const name = textOfExpression(node.expression);
-    if (name && name.length <= 80 && !name.includes("=>")) {
-      const line = node.getSourceFile().getLineAndCharacterOfPosition(node.getStart()).line + 1;
-      sink.push({ name, line });
-    }
-  }
-  ts.forEachChild(node, (child) => collectCalls(child, sink));
-}
-
-function collectJsxTags(node: ts.Node, sink: Array<{ name: string; line: number }>): void {
-  const handleTag = (tag: ts.JsxTagNameExpression) => {
-    let name: string | null = null;
-    if (ts.isIdentifier(tag)) name = tag.text;
-    else if (ts.isPropertyAccessExpression(tag)) name = textOfExpression(tag);
-    if (name && /^[A-Z]/.test(name.split(".")[0] ?? "")) {
-      const line = node.getSourceFile().getLineAndCharacterOfPosition(node.getStart()).line + 1;
-      sink.push({ name, line });
-    }
-  };
-  if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
-    handleTag(node.tagName);
-  }
-  ts.forEachChild(node, (child) => collectJsxTags(child, sink));
-}
-
-function pushExport(
-  exports: ParsedExport[],
-  name: string,
-  kind: ParsedExport["kind"],
-  node: ts.Node,
-): void {
-  const line = node.getSourceFile().getLineAndCharacterOfPosition(node.getStart()).line + 1;
-  exports.push({ name, kind, line });
+export interface ParseSourceOptions {
+  language?: LanguageId;
+  parserId?: string;
+  extension?: string;
 }
 
 /**
- * Static AST analysis for a single TS/JS file. Regex is used only for tiny
- * fallbacks (e.g. pages-router method switches); all structure comes from the
- * TypeScript compiler AST.
+ * Static AST analysis for a single TS/JS file producing the normalized IR.
+ * Regex is used only for tiny fallbacks (e.g. pages-router method switches);
+ * all structure comes from the TypeScript compiler AST.
  */
-export function parseSource(path: string, content: string): ParsedFile {
+export function parseSource(
+  path: string,
+  content: string,
+  options: ParseSourceOptions = {},
+): FileIR {
   const sourceFile = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true, scriptKindFor(path));
 
-  const imports: ParsedImport[] = [];
-  const exports: ParsedExport[] = [];
+  const imports: IrImport[] = [];
+  const exports: IrExport[] = [];
+  const symbols: IrSymbol[] = [];
   const components = new Set<string>();
   const hooks = new Set<string>();
   const functions = new Set<string>();
   const classes = new Set<string>();
-  const jsxTags: Array<{ name: string; line: number }> = [];
-  const calls: Array<{ name: string; line: number }> = [];
-  const routeHandlers: Array<{ method: string; line: number }> = [];
-  const envVars = new Set<string>();
-  const fetchPaths: Array<{ path: string; line: number }> = [];
+  const jsxTags: IrJsxTag[] = [];
+  const calls: IrCall[] = [];
+  const routeHandlers: IrRouteHandler[] = [];
+  const envReads: IrEnvRead[] = [];
+  const fetchPaths: IrFetchPath[] = [];
   const directives = { useClient: false, useServer: false };
-  let defaultExport: ParsedExport | undefined;
+  let defaultExport: IrExport | undefined;
   let usesJsx = false;
 
-  const lineOf = (node: ts.Node) =>
-    sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+  const rangeOf = (node: ts.Node): IrSourceRange => {
+    const start = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+    const end = sourceFile.getLineAndCharacterOfPosition(node.getEnd()).line + 1;
+    return { path, startLine: start, endLine: end };
+  };
+
+  const addSymbol = (name: string, kind: IrSymbolKind, node: ts.Node, exported: boolean, isDefault: boolean) => {
+    if (symbols.length >= MAX_SYMBOLS_PER_FILE) return;
+    symbols.push({
+      name,
+      kind,
+      exported: exported || isDefault,
+      ...(isDefault ? { defaultExport: true } : {}),
+      range: rangeOf(node),
+    });
+  };
 
   const registerFunction = (name: string, node: ts.Node, exported: boolean, isDefault: boolean) => {
     const component = isComponentName(name) && containsJsx(node);
     const hook = isHookName(name);
+    const symbolKind: IrSymbolKind = component ? "component" : hook ? "hook" : "function";
     if (component) components.add(name);
     if (hook) hooks.add(name);
     else functions.add(name);
     if (HTTP_METHODS.has(name)) {
-      routeHandlers.push({ method: name, line: lineOf(node) });
+      routeHandlers.push({ method: name, range: rangeOf(node) });
     }
+    addSymbol(name, symbolKind, node, exported, isDefault);
     if (exported || isDefault || component || hook) {
-      const kind: ParsedExport["kind"] = component ? "component" : hook ? "hook" : "function";
-      const entry: ParsedExport = { name, kind, line: lineOf(node) };
+      const exportKind: IrExportKind = component ? "component" : hook ? "hook" : "function";
+      const entry: IrExport = { name, kind: exportKind, range: rangeOf(node) };
       if (isDefault) {
-        defaultExport = entry;
+        defaultExport = { ...entry, kind: "default" };
         exports.push({ ...entry, kind: "default" });
       } else if (exported) {
         exports.push(entry);
@@ -245,7 +172,7 @@ export function parseSource(path: string, content: string): ParsedFile {
       const specifier = ts.isStringLiteralLike(node.moduleSpecifier) ? node.moduleSpecifier.text : "";
       if (specifier) {
         const clause = node.importClause;
-        let kind: ParsedImport["kind"] = "side-effect";
+        let kind: IrImport["kind"] = "side-effect";
         const importedNames: string[] = [];
         const localNames: string[] = [];
         if (clause) {
@@ -261,7 +188,7 @@ export function parseSource(path: string, content: string): ParsedFile {
               importedNames.push("*");
               localNames.push(bindings.name.text);
             } else {
-              kind = kind === "default" ? "named" : "named";
+              kind = "named";
               for (const element of bindings.elements) {
                 importedNames.push(element.propertyName?.text ?? element.name.text);
                 localNames.push(element.name.text);
@@ -275,7 +202,7 @@ export function parseSource(path: string, content: string): ParsedFile {
           importedNames,
           localNames,
           typeOnly: Boolean(clause?.isTypeOnly),
-          line: lineOf(node),
+          range: rangeOf(node),
         });
       }
     }
@@ -291,8 +218,11 @@ export function parseSource(path: string, content: string): ParsedFile {
         importedNames: exported,
         localNames: [],
         typeOnly: Boolean(node.isTypeOnly),
-        line: lineOf(node),
+        range: rangeOf(node),
       });
+      for (const name of exported) {
+        exports.push({ name, kind: "re-export", range: rangeOf(node) });
+      }
     }
 
     // import x = require("...")
@@ -305,7 +235,7 @@ export function parseSource(path: string, content: string): ParsedFile {
           importedNames: ["*"],
           localNames: [node.name.text],
           typeOnly: false,
-          line: lineOf(node),
+          range: rangeOf(node),
         });
       }
     }
@@ -316,22 +246,22 @@ export function parseSource(path: string, content: string): ParsedFile {
       if (isDefault) {
         let name = "default";
         if (ts.isIdentifier(node.expression)) name = node.expression.text;
-        const entry: ParsedExport = { name, kind: "default", line: lineOf(node) };
+        const entry: IrExport = { name, kind: "default", range: rangeOf(node) };
         defaultExport = entry;
         exports.push(entry);
       }
     }
 
-    // Function declarations
+    // Function declarations (top level and namespaces only for symbols)
     if (ts.isFunctionDeclaration(node) && node.name) {
       registerFunction(node.name.text, node, isExported(node), isDefaultExported(node));
     }
 
-    // Classes
+    // Classes (+ methods as symbols)
     if (ts.isClassDeclaration(node) && node.name) {
       classes.add(node.name.text);
       if (isExported(node) || isDefaultExported(node)) {
-        const entry: ParsedExport = { name: node.name.text, kind: "class", line: lineOf(node) };
+        const entry: IrExport = { name: node.name.text, kind: "class", range: rangeOf(node) };
         if (isDefaultExported(node)) {
           defaultExport = { ...entry, kind: "default" };
           exports.push({ ...entry, kind: "default" });
@@ -339,9 +269,36 @@ export function parseSource(path: string, content: string): ParsedFile {
           exports.push(entry);
         }
       }
+      addSymbol(node.name.text, "class", node, isExported(node), isDefaultExported(node));
+      for (const member of node.members) {
+        if (ts.isMethodDeclaration(member) && member.name && ts.isIdentifier(member.name)) {
+          addSymbol(member.name.text, "method", member, false, false);
+        }
+      }
     }
 
-    // Variable declarations (arrow components, hooks, handlers, stores)
+    if (ts.isInterfaceDeclaration(node)) {
+      addSymbol(node.name.text, "interface", node, isExported(node), isDefaultExported(node));
+      if (isExported(node)) {
+        exports.push({ name: node.name.text, kind: "type", range: rangeOf(node) });
+      }
+    }
+
+    if (ts.isTypeAliasDeclaration(node)) {
+      addSymbol(node.name.text, "type", node, isExported(node), false);
+      if (isExported(node)) {
+        exports.push({ name: node.name.text, kind: "type", range: rangeOf(node) });
+      }
+    }
+
+    if (ts.isEnumDeclaration(node)) {
+      addSymbol(node.name.text, "enum", node, isExported(node), false);
+      if (isExported(node)) {
+        exports.push({ name: node.name.text, kind: "const", range: rangeOf(node) });
+      }
+    }
+
+    // Variable declarations (arrow components, hooks, handlers, stores, consts)
     if (ts.isVariableStatement(node)) {
       const exported = isExported(node);
       for (const declaration of node.declarationList.declarations) {
@@ -350,11 +307,12 @@ export function parseSource(path: string, content: string): ParsedFile {
         const initializer = declaration.initializer;
         const functionLike = initializer && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer));
         if (functionLike) {
-          registerFunction(name, initializer, exported, false);
+          registerFunction(name, declaration, exported, false);
           continue;
         }
+        addSymbol(name, "const", declaration, exported, false);
         if (exported) {
-          pushExport(exports, name, "const", declaration);
+          exports.push({ name, kind: "const", range: rangeOf(declaration) });
         }
       }
     }
@@ -374,25 +332,28 @@ export function parseSource(path: string, content: string): ParsedFile {
 
   visit(sourceFile);
 
-  collectEnvVars(sourceFile, envVars);
-  collectFetchPaths(sourceFile, fetchPaths);
-  collectCalls(sourceFile, calls);
-  collectJsxTags(sourceFile, jsxTags);
+  collectEnvReads(sourceFile, envReads, rangeOf);
+  collectFetchPaths(sourceFile, fetchPaths, rangeOf);
+  collectCalls(sourceFile, calls, rangeOf);
+  collectJsxTags(sourceFile, jsxTags, rangeOf);
 
   // Pages-router API methods: look for req.method comparisons in source text.
   const methodMatches = content.matchAll(/method\s*[=!]==?\s*["'`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)["'`]/gi);
   for (const match of methodMatches) {
     const method = match[1].toUpperCase();
     if (!routeHandlers.some((handler) => handler.method === method)) {
-      routeHandlers.push({ method, line: 1 });
+      routeHandlers.push({ method, range: { path, startLine: 1 } });
     }
   }
 
   return {
     path,
+    language: options.language ?? "typescript",
+    parserId: options.parserId ?? "typescript-ast",
     imports,
     exports,
     defaultExport,
+    symbols,
     components: [...components],
     hooks: [...hooks],
     functions: [...functions],
@@ -400,10 +361,129 @@ export function parseSource(path: string, content: string): ParsedFile {
     jsxTags,
     calls,
     routeHandlers,
-    envVars: [...envVars].sort(),
+    envReads,
+    envVars: [...new Set(envReads.map((read) => read.name))].sort(),
     fetchPaths,
     directives,
     usesJsx,
     lines: content.split(/\r?\n/),
   };
+}
+
+function collectEnvReads(
+  node: ts.Node,
+  sink: IrEnvRead[],
+  rangeOf: (node: ts.Node) => IrSourceRange,
+): void {
+  const push = (name: string, at: ts.Node) => {
+    if (sink.length >= MAX_ENV_READS_PER_FILE) return;
+    if (sink.some((read) => read.name === name && read.range.startLine === rangeOf(at).startLine)) return;
+    sink.push({ name, range: rangeOf(at) });
+  };
+
+  if (ts.isPropertyAccessExpression(node)) {
+    // process.env.NAME
+    if (
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "process" &&
+      node.expression.name.text === "env"
+    ) {
+      push(node.name.text, node);
+    }
+  }
+  if (ts.isElementAccessExpression(node)) {
+    const argument = node.argumentExpression;
+    if (
+      argument &&
+      ts.isStringLiteralLike(argument) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "process" &&
+      node.expression.name.text === "env"
+    ) {
+      push(argument.text, node);
+    }
+  }
+  // const { FOO, BAR } = process.env
+  if (ts.isVariableDeclaration(node) && node.initializer && ts.isPropertyAccessExpression(node.initializer)) {
+    const initializer = node.initializer;
+    if (
+      ts.isIdentifier(initializer.expression) &&
+      initializer.expression.text === "process" &&
+      initializer.name.text === "env" &&
+      ts.isObjectBindingPattern(node.name)
+    ) {
+      for (const element of node.name.elements) {
+        if (ts.isIdentifier(element.name) && !element.propertyName) {
+          push(element.name.text, node);
+        } else if (element.propertyName && ts.isIdentifier(element.propertyName)) {
+          push(element.propertyName.text, node);
+        }
+      }
+    }
+  }
+  ts.forEachChild(node, (child) => collectEnvReads(child, sink, rangeOf));
+}
+
+function collectFetchPaths(
+  node: ts.Node,
+  sink: IrFetchPath[],
+  rangeOf: (node: ts.Node) => IrSourceRange,
+): void {
+  if (ts.isCallExpression(node)) {
+    const calleeText = textOfExpression(node.expression);
+    const isFetch = calleeText === "fetch" || calleeText === "window.fetch" || calleeText === "globalThis.fetch";
+    const isHttpClient =
+      calleeText !== null &&
+      /^(axios|ky|got|superagent)(\.(get|post|put|patch|delete|head|require))?$/.test(calleeText.split("(")[0]);
+    if ((isFetch || isHttpClient) && node.arguments.length > 0) {
+      const argument = node.arguments[0];
+      let value: string | null = null;
+      if (ts.isStringLiteralLike(argument)) {
+        value = argument.text;
+      } else if (ts.isTemplateExpression(argument) && argument.templateSpans.length === 1) {
+        value = argument.head.text;
+      } else if (ts.isNoSubstitutionTemplateLiteral(argument)) {
+        value = argument.text;
+      }
+      if (value) {
+        sink.push({ path: value, range: rangeOf(node) });
+      }
+    }
+  }
+  ts.forEachChild(node, (child) => collectFetchPaths(child, sink, rangeOf));
+}
+
+function collectCalls(
+  node: ts.Node,
+  sink: IrCall[],
+  rangeOf: (node: ts.Node) => IrSourceRange,
+): void {
+  if (ts.isCallExpression(node) && sink.length < MAX_CALLS_PER_FILE) {
+    const name = textOfExpression(node.expression);
+    if (name && name.length <= 80 && !name.includes("=>")) {
+      sink.push({ name, range: rangeOf(node) });
+    }
+  }
+  ts.forEachChild(node, (child) => collectCalls(child, sink, rangeOf));
+}
+
+function collectJsxTags(
+  node: ts.Node,
+  sink: IrJsxTag[],
+  rangeOf: (node: ts.Node) => IrSourceRange,
+): void {
+  const handleTag = (tag: ts.JsxTagNameExpression) => {
+    let name: string | null = null;
+    if (ts.isIdentifier(tag)) name = tag.text;
+    else if (ts.isPropertyAccessExpression(tag)) name = textOfExpression(tag);
+    if (name && /^[A-Z]/.test(name.split(".")[0] ?? "")) {
+      sink.push({ name, range: rangeOf(node) });
+    }
+  };
+  if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+    handleTag(node.tagName);
+  }
+  ts.forEachChild(node, (child) => collectJsxTags(child, sink, rangeOf));
 }

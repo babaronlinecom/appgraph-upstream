@@ -3,6 +3,8 @@ import type {
   AppGraphEdgeMetadata,
   AppGraphNode,
   AppGraphNodeMetadata,
+  EdgeEvidence,
+  EdgeEvidenceKind,
   GraphEdgeType,
   GraphGranularity,
   GraphGroupId,
@@ -10,6 +12,9 @@ import type {
 import { GRAPH_GROUPS } from "@/lib/graph/model";
 import { classifyDatabaseOperation, findIntegrationForSpecifier, type DatabaseOperation } from "./integrations";
 import { matchRouteTemplate } from "./frameworks/registry";
+import { providerLabel } from "./data/prisma";
+import { analyzerRegistries } from "./registries";
+import type { IrSourceRange } from "./ir/model";
 import type {
   AnalysisWarningDraft,
   ClassifiedFile,
@@ -141,16 +146,16 @@ function languageFor(path: string): string {
 }
 
 function localUsage(
-  parsed: { jsxTags: Array<{ name: string }>; calls: Array<{ name: string }> },
+  parsed: ParsedFile,
   localNames: string[],
-): { usedInJsx: boolean; callNames: string[] } {
-  const usedInJsx = parsed.jsxTags.some((tag) =>
+): { usedInJsx: boolean; jsxTag?: ParsedFile["jsxTags"][number]; calls: ParsedFile["calls"] } {
+  const jsxTag = parsed.jsxTags.find((tag) =>
     localNames.some((name) => tag.name === name || tag.name.startsWith(`${name}.`)),
   );
-  const callNames = parsed.calls
-    .filter((call) => localNames.some((name) => call.name === name || call.name.startsWith(`${name}.`)))
-    .map((call) => call.name);
-  return { usedInJsx, callNames };
+  const calls = parsed.calls.filter((call) =>
+    localNames.some((name) => call.name === name || call.name.startsWith(`${name}.`)),
+  );
+  return { usedInJsx: Boolean(jsxTag), jsxTag, calls };
 }
 
 interface DatabaseAggregate {
@@ -158,17 +163,64 @@ interface DatabaseAggregate {
   hasWrite: boolean;
   unknown: boolean;
   count: number;
+  readCall?: ParsedFile["calls"][number];
+  writeCall?: ParsedFile["calls"][number];
 }
 
-function aggregateOperations(callNames: string[]): DatabaseAggregate {
-  const aggregate: DatabaseAggregate = { hasRead: false, hasWrite: false, unknown: false, count: callNames.length };
-  for (const callName of callNames) {
-    const operation: DatabaseOperation = classifyDatabaseOperation(callName);
-    if (operation === "read") aggregate.hasRead = true;
-    else if (operation === "write") aggregate.hasWrite = true;
-    else aggregate.unknown = true;
+function aggregateOperations(calls: ParsedFile["calls"]): DatabaseAggregate {
+  const aggregate: DatabaseAggregate = { hasRead: false, hasWrite: false, unknown: false, count: calls.length };
+  for (const call of calls) {
+    const operation: DatabaseOperation = classifyDatabaseOperation(call.name);
+    if (operation === "read") {
+      aggregate.hasRead = true;
+      aggregate.readCall ??= call;
+    } else if (operation === "write") {
+      aggregate.hasWrite = true;
+      aggregate.writeCall ??= call;
+    } else {
+      aggregate.unknown = true;
+    }
   }
   return aggregate;
+}
+
+const MAX_EVIDENCE_PER_EDGE = 6;
+
+function evidenceFrom(
+  range: IrSourceRange | undefined,
+  analyzerId: string,
+  ruleId: string,
+  kind: EdgeEvidenceKind,
+  reason?: string,
+): EdgeEvidence[] | undefined {
+  if (!range) return undefined;
+  return [
+    {
+      path: range.path,
+      startLine: range.startLine,
+      endLine: range.endLine,
+      analyzerId,
+      ruleId,
+      kind,
+      ...(reason ? { reason } : {}),
+    },
+  ];
+}
+
+function evidenceMetadata(
+  base: AppGraphEdgeMetadata | undefined,
+  range: IrSourceRange | undefined,
+  analyzerId: string,
+  ruleId: string,
+  kind: EdgeEvidenceKind,
+  reason?: string,
+): AppGraphEdgeMetadata | undefined {
+  const evidence = evidenceFrom(range, analyzerId, ruleId, kind, reason);
+  if (!evidence) return base;
+  return {
+    ...(base ?? {}),
+    evidence: [...(base?.evidence ?? []), ...evidence].slice(0, MAX_EVIDENCE_PER_EDGE),
+  };
 }
 
 function integrationGroup(integration: DetectedIntegration): GraphGroupId {
@@ -292,6 +344,25 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
       subtitle = file.path;
     }
 
+    const primarySymbol =
+      parsed.symbols.find(
+        (symbol) =>
+          symbol.exported &&
+          (symbol.kind === "component" || symbol.kind === "function" || symbol.kind === "class"),
+      ) ??
+      parsed.symbols.find((symbol) => symbol.kind === "component") ??
+      parsed.symbols[0];
+    const symbolMetadata = parsed.symbols
+      .filter((symbol) => symbol.exported)
+      .slice(0, 16)
+      .map((symbol) => ({
+        name: symbol.name,
+        kind: symbol.kind,
+        line: symbol.range.startLine,
+        endLine: symbol.range.endLine,
+        exported: symbol.exported,
+      }));
+
     const metadata: AppGraphNodeMetadata = {
       group: file.group,
       usageCount,
@@ -303,6 +374,7 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
         .filter((value, index, list) => list.indexOf(value) === index)
         .slice(0, 24),
       exports: parsed.exports.map((entry) => entry.name).slice(0, 24),
+      symbols: symbolMetadata,
       envVars: parsed.envVars.slice(0, 24),
       description: descriptionFor(type, file, parsed, usageCount),
       snippet: snippetFor(parsed.lines, context.limits.maxSnippetLines),
@@ -318,12 +390,16 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
       label,
       subtitle,
       path: file.path,
-      symbol: parsed.components[0] ?? parsed.functions[0],
+      symbol: primarySymbol?.name ?? parsed.components[0] ?? parsed.functions[0],
       framework: file.framework,
       confidence: file.confidence,
       granularity: rank,
       metadata,
-      source: { path: file.path },
+      source: {
+        path: file.path,
+        startLine: primarySymbol?.range.startLine,
+        endLine: primarySymbol?.range.endLine,
+      },
     };
     nodes.set(node.id, node);
     nodeRank.set(node.id, rankOrder(rank));
@@ -366,28 +442,31 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
   // --- ORM -> database link ---
   const ormNodes = [...nodes.values()].filter((node) => node.id.startsWith("orm:"));
   const databaseNodes = [...nodes.values()].filter((node) => node.type === "database" && !node.path);
-  const isPrisma = ormNodes.some((orm) => orm.id === "orm:prisma");
-  if (isPrisma && databaseNodes.length === 0) {
-    const schemaProvider = context.files.get("prisma/schema.prisma")
-      ? parsePrismaProvider(context.files.get("prisma/schema.prisma") as string)
-      : null;
-    const label = schemaProvider ? providerLabel(schemaProvider) : "Database";
+  if (databaseNodes.length === 0 && context.dataSchemas.length > 0) {
+    const detection = context.dataSchemas[0];
+    const label = detection.provider ? providerLabel(detection.provider.raw) : "Database";
     const id = `db:${slug(label)}`;
     const node: AppGraphNode = {
       id,
       type: "database",
       label,
       subtitle: "Database",
-      confidence: schemaProvider ? 0.9 : 0.6,
+      confidence: detection.provider ? 0.95 : 0.6,
       granularity: "product",
       metadata: {
         group: "data",
         integrationKind: "database",
-        description: schemaProvider
-          ? `Database provider "${schemaProvider}" detected in prisma/schema.prisma.`
-          : "Database inferred from Prisma usage. Provider could not be determined statically.",
-        models: schemaProvider ? parsePrismaModels(context.files.get("prisma/schema.prisma") as string) : [],
+        description: detection.provider
+          ? `Database provider "${detection.provider.raw}" parsed from ${detection.files.join(", ")}.`
+          : `Database inferred from ${detection.format} schema. Provider could not be determined statically.`,
+        models: detection.models.map((model) => model.name).slice(0, 40),
+        modelCount: detection.models.length,
+        schemaAnalyzer: detection.analyzerId,
+        schemaFiles: detection.files,
       },
+      source: detection.provider
+        ? { path: detection.provider.range.path, startLine: detection.provider.range.startLine }
+        : { path: detection.files[0], startLine: 1 },
     };
     nodes.set(id, node);
     nodeRank.set(id, rankOrder("product"));
@@ -505,7 +584,7 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
       if (handledSpecifiers.has(entry.specifier)) continue;
       handledSpecifiers.add(entry.specifier);
       const targetPath = resolved.get(entry.specifier);
-      const { usedInJsx, callNames } = localUsage(parsed, entry.localNames);
+      const usage = localUsage(parsed, entry.localNames);
 
       if (targetPath && targetPath !== fromPath) {
         const targetId = fileNodeId(targetPath);
@@ -514,41 +593,177 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
         if (!targetFile || !targetNode) continue;
 
         if (entry.typeOnly) {
-          addEdge(sourceId, targetId, "depends_on", 0.55, { label: "type import" });
+          addEdge(
+            sourceId,
+            targetId,
+            "depends_on",
+            0.55,
+            evidenceMetadata(
+              { label: "type import" },
+              entry.range,
+              parsed.parserId,
+              "import.type-only",
+              "exact",
+              `import type from "${entry.specifier}"`,
+            ),
+          );
           continue;
         }
 
         if (targetFile.category === "database" || targetFile.category === "schema") {
-          const aggregate = aggregateOperations(callNames);
-          if (aggregate.hasRead) addEdge(sourceId, targetId, "reads", 0.82, { count: aggregate.count });
-          if (aggregate.hasWrite) addEdge(sourceId, targetId, "writes", 0.85, { count: aggregate.count });
+          const aggregate = aggregateOperations(usage.calls);
+          if (aggregate.hasRead && aggregate.readCall) {
+            addEdge(
+              sourceId,
+              targetId,
+              "reads",
+              0.82,
+              evidenceMetadata(
+                { count: aggregate.count },
+                aggregate.readCall.range,
+                parsed.parserId,
+                "db.operation.classify",
+                "inferred",
+                `call ${aggregate.readCall.name} classified as a read`,
+              ),
+            );
+          }
+          if (aggregate.hasWrite && aggregate.writeCall) {
+            addEdge(
+              sourceId,
+              targetId,
+              "writes",
+              0.85,
+              evidenceMetadata(
+                { count: aggregate.count },
+                aggregate.writeCall.range,
+                parsed.parserId,
+                "db.operation.classify",
+                "inferred",
+                `call ${aggregate.writeCall.name} classified as a write`,
+              ),
+            );
+          }
           if (!aggregate.hasRead && !aggregate.hasWrite) {
-            addEdge(sourceId, targetId, "uses", 0.7, { label: "database module" });
+            addEdge(
+              sourceId,
+              targetId,
+              "uses",
+              0.7,
+              evidenceMetadata(
+                { label: "database module" },
+                entry.range,
+                parsed.parserId,
+                "import.database-module",
+                "resolved",
+                `import from "${entry.specifier}"`,
+              ),
+            );
           }
           continue;
         }
 
         if (targetFile.category === "component" || targetFile.category === "hook") {
-          if (usedInJsx) {
-            addEdge(sourceId, targetId, "renders", 0.92);
-          } else if (callNames.length > 0 || targetFile.category === "hook") {
-            addEdge(sourceId, targetId, "calls", 0.86, { via: callNames[0] });
+          if (usage.usedInJsx && usage.jsxTag) {
+            addEdge(
+              sourceId,
+              targetId,
+              "renders",
+              0.92,
+              evidenceMetadata(
+                undefined,
+                usage.jsxTag.range,
+                parsed.parserId,
+                "react.jsx-usage",
+                "resolved",
+                `JSX <${usage.jsxTag.name}> bound to import "${entry.specifier}"`,
+              ),
+            );
+          } else if (usage.calls.length > 0 || targetFile.category === "hook") {
+            const call = usage.calls[0];
+            addEdge(
+              sourceId,
+              targetId,
+              "calls",
+              0.86,
+              evidenceMetadata(
+                call ? { via: call.name } : undefined,
+                call?.range ?? entry.range,
+                parsed.parserId,
+                call ? "symbol.imported-call" : "symbol.imported-reference",
+                "resolved",
+                call ? `call ${call.name}` : `import from "${entry.specifier}"`,
+              ),
+            );
           } else {
-            addEdge(sourceId, targetId, "imports", 0.9);
+            addEdge(
+              sourceId,
+              targetId,
+              "imports",
+              0.9,
+              evidenceMetadata(
+                undefined,
+                entry.range,
+                parsed.parserId,
+                "import.resolve",
+                "exact",
+                `import from "${entry.specifier}"`,
+              ),
+            );
           }
           continue;
         }
 
         if (targetFile.category === "service" || targetFile.category === "state") {
-          if (callNames.length > 0) {
-            addEdge(sourceId, targetId, "calls", 0.85, { via: callNames[0] });
+          if (usage.calls.length > 0) {
+            const call = usage.calls[0];
+            addEdge(
+              sourceId,
+              targetId,
+              "calls",
+              0.85,
+              evidenceMetadata(
+                { via: call.name },
+                call.range,
+                parsed.parserId,
+                "symbol.imported-call",
+                "resolved",
+                `call ${call.name}`,
+              ),
+            );
           } else {
-            addEdge(sourceId, targetId, "imports", 0.9);
+            addEdge(
+              sourceId,
+              targetId,
+              "imports",
+              0.9,
+              evidenceMetadata(
+                undefined,
+                entry.range,
+                parsed.parserId,
+                "import.resolve",
+                "exact",
+                `import from "${entry.specifier}"`,
+              ),
+            );
           }
           continue;
         }
 
-        addEdge(sourceId, targetId, "imports", 1, undefined);
+        addEdge(
+          sourceId,
+          targetId,
+          "imports",
+          1,
+          evidenceMetadata(
+            undefined,
+            entry.range,
+            parsed.parserId,
+            "import.resolve",
+            "exact",
+            `import from "${entry.specifier}"`,
+          ),
+        );
         continue;
       }
 
@@ -562,18 +777,72 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
           confidence: 1,
         });
         if (nodes.has(targetIdMatches)) {
-          const aggregate = aggregateOperations(callNames);
+          const aggregate = aggregateOperations(usage.calls);
           const kind = integration.definition.kind;
           if (kind === "database") {
-            if (aggregate.hasRead) addEdge(sourceId, targetIdMatches, "reads", 0.8, { count: aggregate.count });
-            if (aggregate.hasWrite) addEdge(sourceId, targetIdMatches, "writes", 0.82, { count: aggregate.count });
-            if (!aggregate.hasRead && !aggregate.hasWrite) {
-              addEdge(sourceId, targetIdMatches, "uses", 0.75, { label: integration.definition.label });
+            if (aggregate.hasRead && aggregate.readCall) {
+              addEdge(
+                sourceId,
+                targetIdMatches,
+                "reads",
+                0.8,
+                evidenceMetadata(
+                  { count: aggregate.count },
+                  aggregate.readCall.range,
+                  parsed.parserId,
+                  "integration.db-call",
+                  "inferred",
+                  `${integration.packageName}: ${aggregate.readCall.name} classified as a read`,
+                ),
+              );
             }
-          } else if (kind === "orm") {
-            addEdge(sourceId, targetIdMatches, "uses", 0.9, { label: integration.definition.label });
+            if (aggregate.hasWrite && aggregate.writeCall) {
+              addEdge(
+                sourceId,
+                targetIdMatches,
+                "writes",
+                0.82,
+                evidenceMetadata(
+                  { count: aggregate.count },
+                  aggregate.writeCall.range,
+                  parsed.parserId,
+                  "integration.db-call",
+                  "inferred",
+                  `${integration.packageName}: ${aggregate.writeCall.name} classified as a write`,
+                ),
+              );
+            }
+            if (!aggregate.hasRead && !aggregate.hasWrite) {
+              addEdge(
+                sourceId,
+                targetIdMatches,
+                "uses",
+                0.75,
+                evidenceMetadata(
+                  { label: integration.definition.label },
+                  entry.range,
+                  parsed.parserId,
+                  "integration.package-import",
+                  "exact",
+                  `package "${integration.packageName}" imported`,
+                ),
+              );
+            }
           } else {
-            addEdge(sourceId, targetIdMatches, "uses", 0.95, { label: integration.definition.label });
+            addEdge(
+              sourceId,
+              targetIdMatches,
+              "uses",
+              kind === "orm" ? 0.9 : 0.95,
+              evidenceMetadata(
+                { label: integration.definition.label },
+                entry.range,
+                parsed.parserId,
+                "integration.package-import",
+                "exact",
+                `package "${integration.packageName}" imported`,
+              ),
+            );
           }
         }
       }
@@ -582,14 +851,46 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
     // Environment variable usage
     const envVars = envVarsByFile.get(fromPath);
     if (envVars && nodes.has(CONFIG_NODE_ID)) {
-      addEdge(sourceId, CONFIG_NODE_ID, "uses", 0.9, { envVars: envVars.slice(0, 12) });
+      const reads = (parsed.envReads ?? []).slice(0, MAX_EVIDENCE_PER_EDGE);
+      const metadata: AppGraphEdgeMetadata = { envVars: envVars.slice(0, 12) };
+      if (reads.length > 0) {
+        metadata.evidence = reads.map((read) => ({
+          path: read.range.path,
+          startLine: read.range.startLine,
+          endLine: read.range.endLine,
+          symbol: read.name,
+          analyzerId: parsed.parserId,
+          ruleId: "env.process-read",
+          kind: "exact" as const,
+          reason: `process.env.${read.name}`,
+        }));
+      }
+      addEdge(sourceId, CONFIG_NODE_ID, "uses", 0.9, metadata);
     }
   }
 
-  // ORM -> database edges
+  // ORM -> database edges. The link is only drawn when a schema analyzer
+  // actually detected a provider; otherwise it stays a low-confidence inference.
   for (const orm of ormNodes) {
     for (const database of databaseNodes) {
-      addEdge(orm.id, database.id, "uses", 0.85, { label: orm.label });
+      const detection = context.dataSchemas.find((candidate) => candidate.provider);
+      const range = detection?.provider?.range;
+      addEdge(
+        orm.id,
+        database.id,
+        "uses",
+        detection?.provider ? 0.9 : 0.6,
+        evidenceMetadata(
+          { label: orm.label },
+          range,
+          detection?.analyzerId ?? "orm-mapping",
+          detection?.provider ? "prisma.datasource-provider" : "orm.default-database",
+          detection?.provider ? "exact" : "inferred",
+          detection?.provider
+            ? `provider "${detection.provider.raw}" declared in ${detection.provider.range.path}`
+            : "no schema provider found; database inferred from ORM usage",
+        ),
+      );
     }
   }
 
@@ -611,8 +912,8 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
   };
 
   const detectedFrameworkIds = new Set(context.signals.detectedFrameworks);
-  const { FRAMEWORK_ANALYZERS } = await import("./frameworks/registry");
-  for (const analyzer of FRAMEWORK_ANALYZERS) {
+  for (const entry of analyzerRegistries.frameworks.list()) {
+    const analyzer = entry.analyzer;
     if (!detectedFrameworkIds.has(analyzer.id)) continue;
     try {
       const analysis = await analyzer.analyze(analysisContext);
@@ -701,39 +1002,24 @@ function mergeEdgeMetadata(
   const merged: AppGraphEdgeMetadata = { ...current, ...next };
   const envVars = [...new Set([...(current?.envVars ?? []), ...(next.envVars ?? [])])].slice(0, 12);
   if (envVars.length > 0) merged.envVars = envVars;
+
+  const evidence = [...(current?.evidence ?? []), ...(next.evidence ?? [])];
+  if (evidence.length > 0) {
+    const seen = new Set<string>();
+    merged.evidence = evidence
+      .filter((entry) => {
+        const key = `${entry.path}:${entry.startLine ?? 0}:${entry.ruleId}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, MAX_EVIDENCE_PER_EDGE);
+  }
   return merged;
 }
 
 function stripUndefined<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
-}
-
-export function parsePrismaProvider(schema: string): string | null {
-  const match = schema.match(/datasource\s+\w+\s*{[^}]*provider\s*=\s*"([^"]+)"/s);
-  return match?.[1] ?? null;
-}
-
-export function parsePrismaModels(schema: string): string[] {
-  const models: string[] = [];
-  const pattern = /^\s*model\s+([A-Za-z0-9_]+)\s*{/gm;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(schema)) !== null) {
-    models.push(match[1]);
-  }
-  return models.slice(0, 40);
-}
-
-function providerLabel(provider: string): string {
-  const map: Record<string, string> = {
-    postgresql: "PostgreSQL",
-    postgres: "PostgreSQL",
-    mysql: "MySQL",
-    mongodb: "MongoDB",
-    sqlite: "SQLite",
-    sqlserver: "SQL Server",
-    cockroachdb: "CockroachDB",
-  };
-  return map[provider.toLowerCase()] ?? titleCase(provider);
 }
 
 function definitionUrl(id: string): string | undefined {

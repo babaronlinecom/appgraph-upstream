@@ -101,6 +101,18 @@ const graph: AppGraphDocument = {
     cacheHit: false,
   },
   layouts: createEmptyLayouts(),
+  capabilities: {
+    languages: ["typescript"],
+    frameworks: ["nextjs-app"],
+    databaseSchemas: ["prisma"],
+    dataSchemaAnalyzers: ["prisma-schema"],
+    apiProtocols: ["http"],
+    asyncSystems: [],
+    infrastructure: [],
+    symbolResolution: "partial",
+    parsers: ["typescript-ast"],
+    integrations: 30,
+  },
   generatedAt: new Date(0).toISOString(),
 };
 
