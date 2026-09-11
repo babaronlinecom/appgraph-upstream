@@ -529,7 +529,16 @@ function collectCalls(
   if (ts.isCallExpression(node) && sink.length < MAX_CALLS_PER_FILE) {
     const name = textOfExpression(node.expression);
     if (name && name.length <= 80 && !name.includes("=>")) {
-      sink.push({ name, symbol: enclosingSymbolName(node), range: rangeOf(node) });
+      const argumentIdentifiers: string[] = [];
+      for (const argument of node.arguments.slice(0, 3)) {
+        if (ts.isIdentifier(argument)) argumentIdentifiers.push(argument.text);
+      }
+      sink.push({
+        name,
+        symbol: enclosingSymbolName(node),
+        ...(argumentIdentifiers.length > 0 ? { argumentIdentifiers } : {}),
+        range: rangeOf(node),
+      });
     }
   }
   ts.forEachChild(node, (child) => collectCalls(child, sink, rangeOf));

@@ -9,6 +9,8 @@ import {
   ServerCog,
   Settings2,
   ShieldCheck,
+  Table2,
+  Tags,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -32,6 +34,8 @@ export const NODE_TYPE_META: Record<GraphNodeType, NodeTypeMeta> = {
   config: { label: "Config", icon: Settings2, color: "#8f98a3" },
   module: { label: "Module", icon: FileCode2, color: "#7d8797" },
   symbol: { label: "Symbol", icon: Braces, color: "#6fd3c7" },
+  data_model: { label: "Data model", icon: Table2, color: "#e08bb0" },
+  data_enum: { label: "Enum", icon: Tags, color: "#c9a0e8" },
   group: { label: "Group", icon: Box, color: "#8f98a3" },
 };
 
@@ -51,6 +55,7 @@ export const EDGE_TYPE_META: Record<GraphEdgeType, EdgeTypeMeta> = {
   routes_to: { label: "routes to", color: "#8b7fd4", description: "Requests an internal API route" },
   uses: { label: "uses", color: "#6b7280", description: "Uses a service or dependency" },
   contains: { label: "contains", color: "#4d5563", description: "File declares this symbol" },
+  references: { label: "references", color: "#e08bb0", description: "Model/table relation" },
   depends_on: { label: "depends on", color: "#4a5261", dashed: true, description: "Weak or type-level dependency" },
   unknown: { label: "related", color: "#4a5261", dashed: true, description: "Inferred relationship" },
 };

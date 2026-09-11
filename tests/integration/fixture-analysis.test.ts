@@ -317,6 +317,41 @@ describe("fixture repository analysis", () => {
     expect(buttonSymbols).toEqual([]);
   });
 
+  it("builds data model and enum entities from the Prisma schema", () => {
+    const project = document.nodes.find((node) => node.id === "data:prisma:project")!;
+    const task = document.nodes.find((node) => node.id === "data:prisma:task")!;
+    expect(project?.type).toBe("data_model");
+    expect(task?.type).toBe("data_model");
+
+    const fields = project.metadata.fields as Array<{ name: string; kind: string; primaryKey?: boolean }>;
+    expect(fields.find((field) => field.name === "id")?.primaryKey).toBe(true);
+    expect(fields.find((field) => field.name === "status")?.kind).toBe("enum");
+
+    const enumNode = document.nodes.find((node) => node.id === "data-enum:prisma:projectstatus")!;
+    expect(enumNode?.type).toBe("data_enum");
+    expect(enumNode?.metadata.values).toEqual(["ACTIVE", "ARCHIVED"]);
+
+    const enumLink = edge(project.id, enumNode.id, "references")!;
+    expect(enumLink.metadata?.evidence?.[0]?.ruleId).toBe("data.enum-reference");
+
+    const relation = edge(task.id, project.id, "references")!;
+    expect(relation.metadata?.cardinality).toBe("one");
+    expect(relation.metadata?.evidence?.[0]?.ruleId).toBe("data.relation-field");
+    expect(relation.metadata?.evidence?.[0]?.path).toBe("prisma/schema.prisma");
+  });
+
+  it("connects service code to concrete Prisma models", () => {
+    const service = "file:src/services/project-service.ts";
+    const reads = edge(service, "data:prisma:project", "reads")!;
+    expect(reads).toBeTruthy();
+    expect(reads.metadata?.evidence?.[0]?.ruleId).toBe("prisma.model-access");
+    expect(reads.metadata?.evidence?.[0]?.reason).toContain("prisma.project.findMany");
+
+    const writes = edge(service, "data:prisma:project", "writes")!;
+    expect(writes).toBeTruthy();
+    expect(writes.confidence).toBeGreaterThanOrEqual(0.85);
+  });
+
   function apiNode() {
     return document.nodes.find((node) => node.type === "api");
   }

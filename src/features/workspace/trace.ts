@@ -19,8 +19,9 @@ export const EDGE_PRIORITY: Record<GraphEdgeType, number> = {
   uses: 5,
   imports: 6,
   contains: 7,
-  depends_on: 8,
-  unknown: 9,
+  references: 8,
+  depends_on: 9,
+  unknown: 10,
 };
 
 export type TraceMode = "downstream" | "impact" | "path" | "flow";

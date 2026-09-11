@@ -58,6 +58,32 @@ test.describe("advanced exploration", () => {
     await page.getByRole("button", { name: "Arch", exact: true }).click();
   });
 
+  test("data tab renders parsed schema with fields and relations", async ({ page }) => {
+    await page.goto("/github/fixture/sample-nextjs");
+    const dashboard = page.locator(".react-flow__node", { hasText: "Dashboard" }).first();
+    await expect(dashboard).toBeVisible({ timeout: 90_000 });
+
+    await page.getByRole("button", { name: "data", exact: true }).click();
+    const projectCard = page.getByRole("button", { name: /Project/ }).first();
+    await expect(projectCard).toBeVisible();
+    await expect(page.getByText(/2 models · 1 enums/)).toBeVisible();
+
+    // Expand the model and verify fields/keys come from the Prisma schema.
+    await projectCard.click();
+    await expect(page.getByText("status", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("ProjectStatus", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("pk", { exact: true }).first()).toBeVisible();
+
+    // Relation chips link to the referenced model.
+    await expect(page.getByRole("button", { name: /→ Task/ }).first()).toBeVisible();
+
+    // Impact action works on a data model.
+    await page.getByRole("button", { name: "Impact of Project" }).click();
+    await expect(page.getByText("Impact of Project")).toBeVisible();
+    await page.getByRole("button", { name: "Exit trace" }).click();
+    await page.getByRole("button", { name: "nodes", exact: true }).click();
+  });
+
   test("hover card, legend and context menu", async ({ page }) => {
     await page.goto("/github/fixture/sample-nextjs");
     const dashboard = page.locator(".react-flow__node", { hasText: "Dashboard" }).first();

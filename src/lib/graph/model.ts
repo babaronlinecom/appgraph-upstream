@@ -17,6 +17,8 @@ export type GraphNodeType =
   | "config"
   | "module"
   | "symbol"
+  | "data_model"
+  | "data_enum"
   | "group";
 
 export type GraphEdgeType =
@@ -29,6 +31,7 @@ export type GraphEdgeType =
   | "routes_to"
   | "uses"
   | "contains"
+  | "references"
   | "unknown";
 
 export type GraphGranularity = "product" | "architecture" | "modules" | "files" | "symbols";

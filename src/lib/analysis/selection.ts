@@ -45,9 +45,14 @@ export function collectMetadataCandidates(paths: string[]): string[] {
     }
     if (/^(apps|packages)\/[^/]+\/package\.json$/i.test(path)) {
       candidates.push(path);
+      continue;
+    }
+    // SQL schema/migration files feed the deterministic DDL analyzer.
+    if (/\.sql$/i.test(path) && !/\.generated\.sql$/i.test(path)) {
+      candidates.push(path);
     }
   }
-  return [...new Set(candidates)].slice(0, 24);
+  return [...new Set(candidates)].slice(0, 40);
 }
 
 export function priorityScore(path: string, signals: RepositorySignals): number {

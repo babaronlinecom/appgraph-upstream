@@ -38,9 +38,27 @@ The authoritative plan is `APPGRAPH_ROADMAP.md` (kept in-repo, statuses updated 
   Evidence, trace/impact/path work on symbol nodes.
 - Analysis version bumped to `0.3.0`; layouts include the new granularity.
 
-### Batch 3 — next (Data architecture)
-- AG-DATA-001..007: data model nodes (model/field/enum), Prisma fields/relations,
-  Drizzle schema parser, SQL DDL parser, code↔model read/write targets, ERD view.
+### Batch 3 — Data architecture / ERD (DONE)
+- Data model in the graph schema: `data_model`/`data_enum` nodes, `references`
+  edges with cardinality/field metadata, `contains` provider→model edges and
+  `reads`/`writes` code→model edges.
+- Prisma parser rewritten: provider, models, scalar/enum/relation fields,
+  optional/list, `@id`/`@@id`, `@unique`/`@@unique`, `@relation`, `@default`,
+  `@map`/`@@map`, `@@index`, enums.
+- New Drizzle parser (TypeScript AST): `pgTable`/`mysqlTable`/`sqliteTable`,
+  column chains (notNull/unique/primaryKey/default/references), `pgEnum`,
+  `relations()` one/many; dialect → provider.
+- New SQL DDL parser: `CREATE TABLE`, table-level PK/UNIQUE/FK, `ALTER TABLE ADD
+  FOREIGN KEY`; all `.sql` migrations merged in path order (fetched as schema files).
+- Code↔model usage: `prisma.model.method` → `reads`/`writes` on the concrete
+  model (unknown ops skipped), Drizzle `.from(tableVar)` → `reads`.
+- UI: **Data** explorer tab (model cards with fields, PK/FK/UQ badges, relation
+  chips, search, hide join tables, per-model canvas/impact actions, enum list),
+  **Mermaid ER** export and schema JSON export.
+- Analysis version bumped to `0.4.0`.
+
+### Batch 4 — next (Monorepos + large-repo performance)
+- AG-MONO-001..004, AG-PERF-001/004/005/006.
 
 ## Status
 
@@ -147,8 +165,9 @@ analysis → semantic architecture graph → interactive canvas.
 ## Verification status (last run)
 
 - `npm run typecheck` — clean.
-- `npm test` — 101 tests passed (12 files, incl. symbol resolver, IR, evidence and
-  negative-regression suites; live GitHub/manual tests skipped by default).
+- `npm test` — 115 tests passed (14 files; data parsers, data-graph integration,
+  symbol resolver, IR, evidence and negative-regression suites; live GitHub tests
+  skipped by default).
 - `npm run build` — succeeded (standalone output only when `NEXT_STANDALONE=1`, i.e. in Docker).
 - `npx playwright test` — 8/8 passed: landing (2), workspace interactions, advanced exploration
   (analytics/exports, hover card/legend/context menu, trace/impact/path/tour), mobile sheets,

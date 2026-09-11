@@ -24,6 +24,7 @@ import { ALL_EDGE_TYPES, connectionCounts, visibleNodes } from "@/features/works
 import { EDGE_TYPE_META, NODE_TYPE_META } from "@/components/canvas/node-meta";
 import { InsightsPanel } from "./InsightsPanel";
 import { AnalyticsPanel } from "./AnalyticsPanel";
+import { DataPanel } from "./DataPanel";
 import { cn } from "@/lib/utils/cn";
 
 const GROUP_ICONS: Record<GraphGroupId, typeof LayoutTemplate> = {
@@ -99,7 +100,7 @@ export function Explorer() {
       </div>
 
       <div className="flex gap-1 border-b border-line px-2 py-1.5">
-        {(["nodes", "insights", "analytics"] as const).map((item) => (
+        {(["nodes", "insights", "analytics", "data"] as const).map((item) => (
           <button
             key={item}
             type="button"
@@ -119,6 +120,8 @@ export function Explorer() {
         <InsightsPanel />
       ) : tab === "analytics" ? (
         <AnalyticsPanel />
+      ) : tab === "data" ? (
+        <DataPanel />
       ) : (
         <>
           <div className="space-y-3 border-b border-line p-3">

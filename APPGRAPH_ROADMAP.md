@@ -495,7 +495,13 @@ This is one of the highest-value upgrades.
 
 ## AG-DATA-001 — Dedicated Data model in graph schema
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 3)
+
+New node kinds `data_model` and `data_enum`; new edge kind `references`
+(cardinality + field in metadata). `DataSchemaDetection` carries models with
+located fields (name, type, optional/list, PK/unique, default, map, relation),
+enums and provider. `contains` links provider → models; `reads`/`writes` link
+code → concrete models.
 
 Add first-class concepts:
 - database;
@@ -539,7 +545,14 @@ Fields do not need to always appear as full canvas nodes. They can live inside e
 
 ## AG-DATA-002 — Prisma schema parser
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 3)
+
+`src/lib/analysis/data/prisma.ts` parses datasource/provider (with line),
+models, scalar/enum/relation fields, optional/list modifiers, `@id`, `@@id`,
+`@unique`, `@@unique`, `@relation(fields, references)`, `@default`, `@map`,
+`@@map`, `@@index`, enums and relation cardinality. Two-pass parser resolves
+model names before classifying fields. Fixture coverage: relation, enum,
+`@@map`, `@@index`, composite PK.
 
 Parse `schema.prisma` deterministically.
 
@@ -582,7 +595,13 @@ Acceptance fixture:
 
 ## AG-DATA-003 — Drizzle schema parser
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 3)
+
+`src/lib/analysis/data/drizzle.ts` (TypeScript AST, schema code is never
+executed) parses `pgTable`/`mysqlTable`/`sqliteTable`, columns with
+`.primaryKey()`, `.notNull()`, `.unique()`, `.default()`, `.references(() => t.col)`,
+`pgEnum` values, and `relations()` `one`/`many` declarations; dialect maps to a
+provider. Detection requires a real `drizzle-orm` import + table factory call.
 
 Support common Drizzle patterns:
 - `pgTable`;
@@ -605,7 +624,14 @@ Use AST parsing only.
 
 ## AG-DATA-004 — SQL DDL parser
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 3)
+
+`src/lib/analysis/data/sql-ddl.ts` statically parses `.sql` files (fetched as
+schema candidates): `CREATE TABLE [IF NOT EXISTS]`, columns, inline/table-level
+`PRIMARY KEY`, `UNIQUE`, `REFERENCES`, `DEFAULT`, and
+`ALTER TABLE ... ADD ... FOREIGN KEY`. All migration files are merged in path
+order into one current model so cross-file foreign keys resolve. SQL is never
+executed.
 
 Support `.sql` schema/migration files:
 - `CREATE TABLE`;
@@ -650,7 +676,14 @@ Later language-specific:
 
 ## AG-DATA-006 — Code ↔ table/model usage
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 3)
+
+Prisma model calls (`prisma|db|tx.<model>.<method>`) are matched against parsed
+models and classified into `reads`/`writes` with `prisma.model-access` evidence
+(exact call line, confidence 0.85); unknown operations produce no edge. Drizzle
+`.from(<tableVar>)` calls are matched by table variable/name and produce
+`reads` with `drizzle.table-read` evidence. Ambiguous member calls are never
+guessed.
 
 Current graph has broad DB read/write inference. Upgrade to concrete model/table targets.
 
@@ -678,7 +711,16 @@ Detect:
 
 ## AG-DATA-007 — ERD view
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 3)
+
+New **Data** explorer tab: schema provider/format badges, model list with
+expandable field tables (name, type, PK/FK/UQ/NULL/LIST badges), relation chips
+that jump to the referenced model, model search, "hide join tables", per-model
+"show on canvas" and "impact" (reverse traversal) actions, enum list, plus
+**Mermaid ER** copy/download and **schema JSON** export. The canvas also shows
+`data_model`/`data_enum` nodes with `references`/`reads`/`writes` edges, so
+trace/impact work on the ERD. Full canvas table-card rendering remains a UI
+follow-up (fields live in the Data panel and node metadata today).
 
 Add dedicated `Data` mode rather than forcing database structure into the generic app graph.
 
@@ -2768,11 +2810,17 @@ new parser-registry, IR and negative-regression suites), `npm run build`,
 - [x] add symbol drill-down UI (Symbols granularity in Explorer, palette command, shortcut `5`)
 
 ### Batch 3
-- [ ] AG-DATA-001 data graph model
-- [ ] AG-DATA-002 Prisma parser
-- [ ] AG-DATA-006 code ↔ model usage
-- [ ] AG-DATA-007 ERD view
-- [ ] Prisma fixture with relation coverage
+- [x] AG-DATA-001 data graph model
+- [x] AG-DATA-002 Prisma parser
+- [x] AG-DATA-003 Drizzle parser
+- [x] AG-DATA-004 SQL DDL parser
+- [x] AG-DATA-006 code ↔ model usage
+- [x] AG-DATA-007 ERD view (Data tab + Mermaid ER + schema JSON)
+- [x] Prisma fixture with relation coverage
+
+Batch 3 verification: `npm run typecheck`, `npm test` (115 tests incl. data
+parser units, data-graph integration and updated fixture assertions),
+`npm run build`, `npx playwright test` (10 E2E incl. the Data tab).
 
 Only after these three batches should the team start Python/Go support.
 

@@ -42,7 +42,7 @@ export interface WorkspaceFilters {
 }
 
 export type WorkspaceStatus = "idle" | "queued" | "running" | "complete" | "error";
-export type ExplorerTab = "nodes" | "insights" | "analytics";
+export type ExplorerTab = "nodes" | "insights" | "analytics" | "data";
 
 interface PositionMap {
   [nodeId: string]: { x: number; y: number };

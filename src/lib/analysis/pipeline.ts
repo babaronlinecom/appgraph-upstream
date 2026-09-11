@@ -94,7 +94,7 @@ function createStepTracker(onProgress?: (steps: AnalysisStep[]) => void) {
 }
 
 function analysisVersion(): string {
-  return process.env.APPGRAPH_ANALYSIS_VERSION?.trim() || "0.3.0";
+  return process.env.APPGRAPH_ANALYSIS_VERSION?.trim() || "0.4.0";
 }
 
 export function graphCacheKey(ownerRepo: string, commitSha: string): string {

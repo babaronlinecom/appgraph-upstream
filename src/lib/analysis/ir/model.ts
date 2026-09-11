@@ -86,6 +86,8 @@ export interface IrCall {
   name: string;
   /** Enclosing declared symbol at the call site, when known. */
   symbol?: string;
+  /** Identifier arguments (first few), used for schema-fact matching like `.from(users)`. */
+  argumentIdentifiers?: string[];
   range: IrSourceRange;
 }
 

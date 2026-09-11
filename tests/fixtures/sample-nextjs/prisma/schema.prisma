@@ -7,11 +7,19 @@ generator client {
   provider = "prisma-client-js"
 }
 
+enum ProjectStatus {
+  ACTIVE
+  ARCHIVED
+}
+
 model Project {
-  id        String   @id @default(cuid())
-  name      String
-  createdAt DateTime @default(now())
+  id        String        @id @default(cuid())
+  name      String        @unique
+  status    ProjectStatus @default(ACTIVE)
+  createdAt DateTime      @default(now())
   tasks     Task[]
+
+  @@map("projects")
 }
 
 model Task {

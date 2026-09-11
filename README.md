@@ -73,6 +73,15 @@ no LLM, no code execution, no `npm install` of the analyzed repository.
 - Charts: entities by type, relationships by type, per-layer traffic (in/out).
 - Export the graph as **Mermaid**, **JSON** or a **Markdown architecture report**.
 
+### 🗄️ Data architecture / ERD
+- Deterministic schema parsers for **Prisma**, **Drizzle** and **SQL DDL**
+  (fields, keys, relations, enums, indexes — all with source evidence).
+- **Data** workspace: model cards with field tables, PK/FK/UQ badges, relation
+  chips, search, hide-join-tables, per-model impact analysis.
+- Code↔model edges: `prisma.model.findMany` becomes a `reads` edge to the actual
+  model; Drizzle `.from(table)` links code to the parsed table.
+- **Mermaid ER** export and schema JSON export.
+
 ### 🎨 Premium canvas
 - Railway-inspired dark UI, deterministic ELK lane layout (Frontend → Backend → Data →
   Configuration → External), smoothstep edges, animated traces, minimap, command palette (`⌘K`),

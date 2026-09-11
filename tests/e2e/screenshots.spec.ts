@@ -45,6 +45,12 @@ test("captures product screenshots", async ({ page }) => {
   await page.waitForTimeout(500);
   await page.screenshot({ path: path.join(outputDir, "workspace-analytics.png") });
 
+  // Data (ERD) panel with parsed schema.
+  await page.getByRole("button", { name: "data", exact: true }).click();
+  await page.getByRole("button", { name: /Project/ }).first().click();
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: path.join(outputDir, "workspace-data.png") });
+
   await page.getByRole("button", { name: "nodes", exact: true }).click();
   await page.waitForTimeout(300);
 
