@@ -1,0 +1,21 @@
+{
+  "name": "sample-nextjs-app",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build"
+  },
+  "dependencies": {
+    "@clerk/nextjs": "6.9.0",
+    "@prisma/client": "6.2.0",
+    "next": "15.1.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "stripe": "17.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.0",
+    "@types/react": "19.0.0",
+    "typescript": "5.7.2"
+  }
+}

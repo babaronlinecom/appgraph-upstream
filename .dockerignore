@@ -1,0 +1,17 @@
+node_modules
+.next
+.git
+.gitignore
+.appgraph-cache
+.appgraph-cache-*
+.next-*
+test-results
+playwright-report
+coverage
+docs/screenshots
+*.log
+.env
+.env.local
+.env.*.local
+README.md
+APPGRAPH_PROGRESS.md

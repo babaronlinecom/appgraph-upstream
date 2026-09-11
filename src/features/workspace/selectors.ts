@@ -1,0 +1,115 @@
+import {
+  GRANULARITY_ORDER,
+  type AppGraphDocument,
+  type AppGraphEdge,
+  type AppGraphNode,
+  type GraphEdgeType,
+  type GraphGranularity,
+  type GraphGroupId,
+} from "@/lib/graph/model";
+import type { WorkspaceFilters } from "./store";
+
+export const ALL_EDGE_TYPES: GraphEdgeType[] = [
+  "imports",
+  "renders",
+  "calls",
+  "reads",
+  "writes",
+  "routes_to",
+  "uses",
+  "depends_on",
+  "unknown",
+];
+
+export const DEFAULT_FILTERS: WorkspaceFilters = {
+  minConfidence: 0.5,
+  showExternal: true,
+  showConfig: true,
+  hideLowConfidence: false,
+  edgeTypes: Object.fromEntries(ALL_EDGE_TYPES.map((type) => [type, true])) as Record<GraphEdgeType, boolean>,
+};
+
+export function isNodeVisible(
+  node: AppGraphNode,
+  granularity: GraphGranularity,
+  filters: WorkspaceFilters,
+): boolean {
+  if (GRANULARITY_ORDER[node.granularity] > GRANULARITY_ORDER[granularity]) return false;
+  if (!filters.showExternal && node.type === "external") return false;
+  if (!filters.showConfig && (node.type === "config" || node.metadata.group === "config")) return false;
+  return true;
+}
+
+export function visibleNodes(
+  graph: AppGraphDocument,
+  granularity: GraphGranularity,
+  filters: WorkspaceFilters,
+): AppGraphNode[] {
+  return graph.nodes.filter((node) => isNodeVisible(node, granularity, filters));
+}
+
+export function visibleEdges(
+  graph: AppGraphDocument,
+  granularity: GraphGranularity,
+  filters: WorkspaceFilters,
+  visibleIds: Set<string>,
+): AppGraphEdge[] {
+  return graph.edges.filter((edge) => {
+    if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) return false;
+    if (filters.minConfidence > 0 && edge.confidence < filters.minConfidence) return false;
+    if (!filters.edgeTypes[edge.type]) return false;
+    return true;
+  });
+}
+
+export function connectionCounts(graph: AppGraphDocument): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const edge of graph.edges) {
+    counts.set(edge.source, (counts.get(edge.source) ?? 0) + 1);
+    counts.set(edge.target, (counts.get(edge.target) ?? 0) + 1);
+  }
+  return counts;
+}
+
+export interface NeighborSet {
+  nodes: Set<string>;
+  edges: Set<string>;
+}
+
+export function neighborsOf(
+  graph: AppGraphDocument,
+  nodeId: string,
+  direction: "both" | "in" | "out" = "both",
+): NeighborSet {
+  const nodes = new Set<string>([nodeId]);
+  const edges = new Set<string>();
+  for (const edge of graph.edges) {
+    const sourceMatch = direction !== "in" && edge.source === nodeId;
+    const targetMatch = direction !== "out" && edge.target === nodeId;
+    if (sourceMatch || targetMatch) {
+      edges.add(edge.id);
+      nodes.add(edge.source);
+      nodes.add(edge.target);
+    }
+  }
+  return { nodes, edges };
+}
+
+export function groupCounts(nodes: AppGraphNode[]): Map<GraphGroupId, number> {
+  const counts = new Map<GraphGroupId, number>();
+  for (const node of nodes) {
+    counts.set(node.metadata.group, (counts.get(node.metadata.group) ?? 0) + 1);
+  }
+  return counts;
+}
+
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
+}
+
+export function shortRepoName(fullName: string): { owner: string; repo: string } {
+  const [owner, repo] = fullName.split("/");
+  return { owner: owner ?? fullName, repo: repo ?? "" };
+}

@@ -1,0 +1,248 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --ag-bg-canvas: #0a0b0d;
+    --ag-bg-panel: #0f1114;
+    --ag-bg-elevated: #15181d;
+    --ag-bg-overlay: rgba(8, 9, 11, 0.74);
+    --ag-border: #1e2127;
+    --ag-border-strong: #2b2f37;
+    --ag-text-primary: #e8eaee;
+    --ag-text-secondary: #9aa1ac;
+    --ag-text-muted: #6a7280;
+    --ag-accent: #7c8cf8;
+    --ag-accent-soft: rgba(124, 140, 248, 0.14);
+    --ag-accent-ink: #c9cffb;
+    --ag-success: #3fbf8f;
+    --ag-warning: #d9a441;
+    --ag-danger: #e5645f;
+
+    --ag-node-page: #67c7f0;
+    --ag-node-component: #8ba7f5;
+    --ag-node-api: #e0b05c;
+    --ag-node-service: #57c99b;
+    --ag-node-database: #e08bb0;
+    --ag-node-external: #e29a5c;
+    --ag-node-state: #b490e8;
+    --ag-node-middleware: #9aa6b8;
+    --ag-node-config: #8f98a3;
+    --ag-node-module: #7d8797;
+
+    color-scheme: dark;
+  }
+
+  * {
+    border-color: var(--ag-border);
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-canvas text-ink antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: rgba(124, 140, 248, 0.28);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ag-accent);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #262a31;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #333844;
+    background-clip: padding-box;
+  }
+}
+
+@layer components {
+  .ag-panel {
+    @apply border-line bg-panel;
+  }
+
+  .ag-hairline {
+    border-width: 1px;
+  }
+
+  .ag-kbd {
+    @apply inline-flex h-5 min-w-[20px] items-center justify-center rounded border border-line bg-elevated px-1 font-mono text-2xs text-ink-muted;
+  }
+
+  .ag-button {
+    @apply inline-flex select-none items-center justify-center gap-1.5 rounded-md border border-line bg-elevated px-2.5 py-1.5 text-xs font-medium text-ink transition-colors duration-180 hover:border-line-strong hover:bg-[#1a1e24] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .ag-button-primary {
+    @apply border-transparent bg-accent text-[#0b0d14] hover:brightness-110;
+  }
+
+  .ag-icon-button {
+    @apply inline-flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-ink-secondary transition-colors duration-180 hover:border-line hover:bg-elevated hover:text-ink;
+  }
+
+  .ag-input {
+    @apply w-full rounded-md border border-line bg-elevated px-3 py-2 text-sm text-ink placeholder:text-ink-muted focus:border-[#3a4152] focus:outline-none;
+  }
+
+  .ag-section-label {
+    @apply text-2xs font-semibold uppercase tracking-[0.14em] text-ink-muted;
+  }
+}
+
+/* ---------- React Flow integration ---------- */
+
+.react-flow {
+  --xy-background-color: var(--ag-bg-canvas);
+  --xy-edge-stroke-default: #3a4048;
+  --xy-minimap-background-color: var(--ag-bg-panel);
+}
+
+.react-flow__attribution {
+  display: none;
+}
+
+.react-flow__node {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.react-flow__node.dragging {
+  cursor: grabbing;
+}
+
+.react-flow__handle {
+  width: 6px;
+  height: 6px;
+  border: none;
+  background: var(--ag-border-strong);
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.react-flow__handle-connecting,
+.react-flow__handle-valid {
+  opacity: 1;
+}
+
+.react-flow__minimap {
+  border: 1px solid var(--ag-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.react-flow__minimap-mask {
+  fill: rgba(8, 9, 11, 0.72);
+}
+
+.react-flow__edge-path {
+  transition: stroke 160ms ease, opacity 160ms ease;
+}
+
+.react-flow__edge.ag-edge-dimmed {
+  opacity: 0.14;
+}
+
+.react-flow__node.ag-node-dimmed {
+  opacity: 0.3;
+}
+
+.react-flow__node.ag-node-highlighted .ag-node-card {
+  border-color: #3d4452;
+  box-shadow: 0 0 0 1px rgba(124, 140, 248, 0.35), 0 12px 32px -16px rgba(0, 0, 0, 0.85);
+}
+
+.react-flow__node.ag-node-selected .ag-node-card {
+  border-color: rgba(124, 140, 248, 0.8);
+  box-shadow: 0 0 0 1px rgba(124, 140, 248, 0.55), 0 16px 40px -18px rgba(0, 0, 0, 0.9);
+}
+
+.react-flow__node.ag-node-related .ag-node-card {
+  border-color: #343a46;
+}
+
+.react-flow__node.ag-node-muted {
+  opacity: 0.16;
+}
+
+.react-flow__node.ag-trace-active .ag-node-card {
+  border-color: rgba(139, 156, 249, 0.85);
+  box-shadow:
+    0 0 0 1px rgba(139, 156, 249, 0.65),
+    0 0 28px -6px rgba(124, 140, 248, 0.5);
+}
+
+.react-flow__node.ag-trace-past .ag-node-card {
+  border-color: rgba(124, 140, 248, 0.42);
+}
+
+.react-flow__edge.ag-edge-muted {
+  opacity: 0.1;
+}
+
+.react-flow__edge.ag-trace-edge .react-flow__edge-path {
+  stroke-dasharray: 7 7;
+  animation: ag-dash 0.9s linear infinite;
+  stroke-width: 2.4;
+  filter: drop-shadow(0 0 6px rgba(124, 140, 248, 0.35));
+}
+
+@keyframes ag-dash {
+  to {
+    stroke-dashoffset: -28px;
+  }
+}
+
+.ag-trace-player {
+  backdrop-filter: blur(8px);
+}
+
+.react-flow__node.ag-group-child-dimmed {
+  opacity: 0.35;
+}
+
+.ag-node-card {
+  transition: border-color 160ms ease, box-shadow 180ms ease, opacity 160ms ease;
+}
+
+/* ---------- Canvas background ---------- */
+
+.ag-dot-pattern {
+  opacity: 0.5;
+}
+
+/* ---------- Motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
