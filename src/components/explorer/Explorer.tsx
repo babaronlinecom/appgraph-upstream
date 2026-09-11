@@ -34,7 +34,7 @@ const GROUP_ICONS: Record<GraphGroupId, typeof LayoutTemplate> = {
   external: Globe,
 };
 
-const GRANULARITIES: GraphGranularity[] = ["product", "architecture", "modules", "files"];
+const GRANULARITIES: GraphGranularity[] = ["product", "architecture", "modules", "files", "symbols"];
 
 export function Explorer() {
   const { state, dispatch, resetPositions, toast, selectNode, setExplorerTab } = useWorkspace();
@@ -124,7 +124,7 @@ export function Explorer() {
           <div className="space-y-3 border-b border-line p-3">
             <div>
               <span className="ag-section-label mb-1.5 block">Granularity</span>
-              <div className="grid grid-cols-4 gap-1 rounded-md border border-line bg-elevated p-1">
+              <div className="grid grid-cols-5 gap-1 rounded-md border border-line bg-elevated p-1">
                 {GRANULARITIES.map((granularity) => (
                   <button
                     key={granularity}

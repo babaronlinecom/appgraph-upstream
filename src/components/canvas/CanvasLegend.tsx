@@ -15,6 +15,7 @@ const LEGEND_NODE_TYPES: GraphNodeType[] = [
   "middleware",
   "config",
   "module",
+  "symbol",
 ];
 
 const LEGEND_EDGE_TYPES: GraphEdgeType[] = [
@@ -25,6 +26,7 @@ const LEGEND_EDGE_TYPES: GraphEdgeType[] = [
   "writes",
   "uses",
   "imports",
+  "contains",
   "depends_on",
 ];
 

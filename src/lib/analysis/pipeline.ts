@@ -94,7 +94,7 @@ function createStepTracker(onProgress?: (steps: AnalysisStep[]) => void) {
 }
 
 function analysisVersion(): string {
-  return process.env.APPGRAPH_ANALYSIS_VERSION?.trim() || "0.2.0";
+  return process.env.APPGRAPH_ANALYSIS_VERSION?.trim() || "0.3.0";
 }
 
 export function graphCacheKey(ownerRepo: string, commitSha: string): string {
@@ -467,6 +467,8 @@ export async function analyzeRepository(options: AnalyzeOptions): Promise<AppGra
         maxGraphEdges: limits.maxGraphEdges,
         maxComponents: limits.maxComponents,
         maxExternalNodes: limits.maxExternalNodes,
+        maxSymbolNodes: limits.maxSymbolNodes,
+        maxSymbolEdges: limits.maxSymbolEdges,
       },
       files: fetched,
       classified,

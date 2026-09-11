@@ -41,6 +41,7 @@ const GRANULARITY_ITEMS: Array<{ id: GraphGranularity; label: string }> = [
   { id: "architecture", label: "Architecture view" },
   { id: "modules", label: "Modules view" },
   { id: "files", label: "Files view" },
+  { id: "symbols", label: "Symbols view" },
 ];
 
 export function CommandPalette() {

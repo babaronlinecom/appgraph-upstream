@@ -93,6 +93,8 @@ export interface RepositoryContext {
     maxGraphEdges: number;
     maxComponents: number;
     maxExternalNodes: number;
+    maxSymbolNodes: number;
+    maxSymbolEdges: number;
   };
   files: Map<string, string>;
   classified: Map<string, ClassifiedFile>;

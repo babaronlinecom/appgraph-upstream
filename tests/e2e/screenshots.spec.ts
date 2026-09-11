@@ -48,6 +48,13 @@ test("captures product screenshots", async ({ page }) => {
   await page.getByRole("button", { name: "nodes", exact: true }).click();
   await page.waitForTimeout(300);
 
+  // Symbols granularity with resolved symbol graph.
+  await page.getByRole("button", { name: "Symb", exact: true }).click();
+  await page.waitForTimeout(900);
+  await page.screenshot({ path: path.join(outputDir, "workspace-symbols.png") });
+  await page.getByRole("button", { name: "Arch", exact: true }).click();
+  await page.waitForTimeout(400);
+
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Modu", exact: true }).click();
   await page.waitForTimeout(900);

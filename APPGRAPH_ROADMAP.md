@@ -352,7 +352,14 @@ Purpose:
 
 ## AG-SYM-001 — First-class symbol nodes
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 2)
+
+New `symbols` granularity (`product → architecture → modules → files → symbols`).
+Symbol nodes (`type: "symbol"`, id `symbol:{path}#{name}`) are created for
+declared symbols involved in resolved calls/JSX (bounded by
+`maxSymbolNodes`). File→symbol ownership edges use the new `contains` edge type
+with `ir.symbol-declaration` evidence. Only symbols proven to participate in a
+resolved relationship become nodes — unused declarations are not shown.
 
 Add symbol-level entities for:
 - functions;
@@ -382,7 +389,13 @@ Add a new `symbols` granularity or a contextual drill-down subgraph.
 
 ## AG-SYM-002 — Accurate local symbol resolution
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 2)
+
+`src/lib/analysis/resolvers/symbol-resolver.ts` resolves named imports, default
+imports, namespace member calls (`ns.fn()`), and same-file calls, attributing
+each fact to the enclosing declared symbol (functions, methods, arrow
+consts). Only name matches against resolved bindings produce facts; member
+calls on imported non-callable objects are ignored instead of guessed.
 
 Resolve:
 - named imports;
@@ -416,7 +429,11 @@ CheckoutPage.tsx
 
 ## AG-SYM-003 — Re-export/barrel resolver
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 2)
+
+Supports `export * from`, `export * as ns from`, `export { a, b as c } from`
+and multi-hop chains up to depth 8 with cycle protection (memoized resolver in
+`symbol-resolver.ts`). Parser emits located `IrReExport` facts.
 
 Support:
 
@@ -448,7 +465,13 @@ Create `loads` or `imports` relation with lower confidence where necessary.
 
 ## AG-SYM-005 — Call graph confidence model
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 2)
+
+Confidence levels are explicit and carried in evidence:
+`symbol.resolved-call` (0.95, exact), `symbol.namespace-member-call` (0.90,
+resolved), `react.jsx-symbol-render` (0.93, resolved), `symbol.local-call` /
+`react.jsx-local-render` (0.85/0.88, resolved). Every symbol edge links to the
+exact call/JSX line, so the Inspector explains why it exists.
 
 Distinguish:
 
@@ -2737,12 +2760,12 @@ new parser-registry, IR and negative-regression suites), `npm run build`,
 `npx playwright test`.
 
 ### Batch 2
-- [ ] AG-SYM-001 symbol nodes
-- [ ] AG-SYM-002 local symbol resolution
-- [ ] AG-SYM-003 barrel/re-export resolution
-- [ ] AG-SYM-005 call graph confidence
-- [ ] update trace/impact/path to work on symbol-level nodes
-- [ ] add symbol drill-down UI
+- [x] AG-SYM-001 symbol nodes
+- [x] AG-SYM-002 local symbol resolution
+- [x] AG-SYM-003 barrel/re-export resolution
+- [x] AG-SYM-005 call graph confidence
+- [x] update trace/impact/path to work on symbol-level nodes (generic graph traversal + `symbols` granularity + camera/player)
+- [x] add symbol drill-down UI (Symbols granularity in Explorer, palette command, shortcut `5`)
 
 ### Batch 3
 - [ ] AG-DATA-001 data graph model

@@ -9,6 +9,7 @@ function emptyFile(path: string, language: string, parserId: string): FileIR {
     language,
     parserId,
     imports: [],
+    reExports: [],
     exports: [],
     symbols: [],
     components: [],

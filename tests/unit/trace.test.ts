@@ -96,6 +96,8 @@ const graph: AppGraphDocument = {
     services: 1,
     components: 0,
     databaseNodes: 1,
+    symbols: 0,
+    symbolEdges: 0,
     truncated: false,
     durationMs: 0,
     cacheHit: false,

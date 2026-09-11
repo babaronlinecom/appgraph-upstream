@@ -36,6 +36,28 @@ test.describe("advanced exploration", () => {
     await expect(page.getByText(/Mermaid diagram copied|clipboard/)).toBeVisible();
   });
 
+  test("symbol granularity exposes resolved symbols and their calls", async ({ page }) => {
+    await page.goto("/github/fixture/sample-nextjs");
+    const dashboard = page.locator(".react-flow__node", { hasText: "Dashboard" }).first();
+    await expect(dashboard).toBeVisible({ timeout: 90_000 });
+
+    await page.getByRole("button", { name: "Symb", exact: true }).click();
+    const symbolNode = page.locator(".react-flow__node", { hasText: "DashboardPage" }).first();
+    await expect(symbolNode).toBeVisible();
+
+    // Symbol node carries resolved relationships from real imports/JSX.
+    await symbolNode.click();
+    const inspector = page.locator('aside[aria-label="Inspector"]');
+    await expect(inspector).toContainText("Symbol");
+    await expect(inspector).toContainText("bound to src/components/ProjectList.tsx");
+
+    // Tracing works on symbol-level nodes too.
+    await page.keyboard.press("t");
+    await expect(page.getByText("Flow from DashboardPage")).toBeVisible();
+    await page.getByRole("button", { name: "Exit trace" }).click();
+    await page.getByRole("button", { name: "Arch", exact: true }).click();
+  });
+
   test("hover card, legend and context menu", async ({ page }) => {
     await page.goto("/github/fixture/sample-nextjs");
     const dashboard = page.locator(".react-flow__node", { hasText: "Dashboard" }).first();

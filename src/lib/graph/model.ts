@@ -16,6 +16,7 @@ export type GraphNodeType =
   | "middleware"
   | "config"
   | "module"
+  | "symbol"
   | "group";
 
 export type GraphEdgeType =
@@ -27,15 +28,17 @@ export type GraphEdgeType =
   | "depends_on"
   | "routes_to"
   | "uses"
+  | "contains"
   | "unknown";
 
-export type GraphGranularity = "product" | "architecture" | "modules" | "files";
+export type GraphGranularity = "product" | "architecture" | "modules" | "files" | "symbols";
 
 export const GRANULARITY_ORDER: Record<GraphGranularity, number> = {
   product: 0,
   architecture: 1,
   modules: 2,
   files: 3,
+  symbols: 4,
 };
 
 export const GRANULARITY_LABELS: Record<GraphGranularity, string> = {
@@ -43,6 +46,7 @@ export const GRANULARITY_LABELS: Record<GraphGranularity, string> = {
   architecture: "Architecture",
   modules: "Modules",
   files: "Files",
+  symbols: "Symbols",
 };
 
 export type GraphGroupId = "frontend" | "backend" | "data" | "config" | "external";
@@ -196,6 +200,8 @@ export interface GraphStats {
   services: number;
   components: number;
   databaseNodes: number;
+  symbols: number;
+  symbolEdges: number;
   truncated: boolean;
   durationMs: number;
   cacheHit: boolean;
@@ -313,5 +319,6 @@ export function createEmptyLayouts(): Record<GraphGranularity, GraphLayout> {
     architecture: emptyLayout("architecture"),
     modules: emptyLayout("modules"),
     files: emptyLayout("files"),
+    symbols: emptyLayout("symbols"),
   };
 }

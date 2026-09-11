@@ -9,11 +9,12 @@ import type {
   GraphGranularity,
   GraphGroupId,
 } from "@/lib/graph/model";
-import { GRAPH_GROUPS } from "@/lib/graph/model";
+import { GRAPH_GROUPS, GRANULARITY_ORDER } from "@/lib/graph/model";
 import { classifyDatabaseOperation, findIntegrationForSpecifier, type DatabaseOperation } from "./integrations";
 import { matchRouteTemplate } from "./frameworks/registry";
 import { providerLabel } from "./data/prisma";
 import { analyzerRegistries } from "./registries";
+import { buildSymbolGraph, type SymbolFact } from "./resolvers/symbol-resolver";
 import type { IrSourceRange } from "./ir/model";
 import type {
   AnalysisWarningDraft,
@@ -36,14 +37,26 @@ export interface GraphBuildResult {
     services: number;
     components: number;
     databaseNodes: number;
+    symbols: number;
+    symbolEdges: number;
   };
 }
 
 export const CONFIG_NODE_ID = "config:environment";
 export const FILE_NODE_PREFIX = "file:";
+export const SYMBOL_NODE_PREFIX = "symbol:";
 
 export function fileNodeId(path: string): string {
   return `${FILE_NODE_PREFIX}${path}`;
+}
+
+export function symbolNodeId(path: string, name: string): string {
+  return `${SYMBOL_NODE_PREFIX}${path}#${name}`;
+}
+
+function splitSymbolKey(key: string): { path: string; name: string } {
+  const index = key.lastIndexOf("#");
+  return { path: key.slice(0, index), name: key.slice(index + 1) };
 }
 
 const GROUP_ORDER = new Map(GRAPH_GROUPS.map((group) => [group.id, group.order]));
@@ -502,6 +515,77 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
     nodeRank.set(node.id, rankOrder(node.granularity));
   }
 
+  // --- Symbol-level entities (Batch 2) ---
+  // Facts are only produced by the resolver when a call/JSX name actually
+  // matches a resolved import binding or a declaration in the same file.
+  const symbolGraph = buildSymbolGraph({
+    parsed: context.parsed,
+    resolvedImports: context.resolvedImports,
+  });
+  const symbolDegree = new Map<string, number>();
+  const symbolKeys = new Set<string>();
+  for (const fact of symbolGraph.facts) {
+    if (fact.target.name === "*") continue;
+    const sourceKey = `${fact.sourcePath}#${fact.sourceSymbol}`;
+    const targetKey = `${fact.target.path}#${fact.target.name}`;
+    symbolKeys.add(sourceKey);
+    symbolKeys.add(targetKey);
+    symbolDegree.set(sourceKey, (symbolDegree.get(sourceKey) ?? 0) + 1);
+    symbolDegree.set(targetKey, (symbolDegree.get(targetKey) ?? 0) + 1);
+  }
+
+  const allowedSymbolKeys = new Set(
+    [...symbolKeys]
+      .filter((key) => {
+        const { path, name } = splitSymbolKey(key);
+        return name !== "*" && context.parsed.has(path);
+      })
+      .sort((a, b) => (symbolDegree.get(b) ?? 0) - (symbolDegree.get(a) ?? 0))
+      .slice(0, context.limits.maxSymbolNodes),
+  );
+
+  for (const key of allowedSymbolKeys) {
+    const { path, name } = splitSymbolKey(key);
+    const file = context.parsed.get(path);
+    if (!file) continue;
+    const symbol = file.symbols.find((candidate) => candidate.name === name);
+    const classified = context.classified.get(path);
+    const node: AppGraphNode = {
+      id: symbolNodeId(path, name),
+      type: "symbol",
+      label: name,
+      subtitle: `${symbol?.kind ?? "symbol"} · ${path}`,
+      path,
+      symbol: name,
+      framework: classified?.framework,
+      confidence: 0.95,
+      granularity: "symbols",
+      metadata: {
+        group: classified?.group ?? "frontend",
+        role: "symbol",
+        symbolKind: symbol?.kind ?? "unknown",
+        description: `Symbol ${name} declared in ${path}${
+          symbol ? ` at line ${symbol.range.startLine}` : ""
+        }. Relationships come from resolved imports, calls and JSX usage.`,
+        imports: [],
+        exports: [],
+      },
+      source: symbol?.range ?? { path },
+    };
+    nodes.set(node.id, node);
+    nodeRank.set(node.id, rankOrder("symbols"));
+  }
+
+  const symbolFacts = symbolGraph.facts
+    .filter(
+      (fact) =>
+        fact.target.name !== "*" &&
+        allowedSymbolKeys.has(`${fact.sourcePath}#${fact.sourceSymbol}`) &&
+        allowedSymbolKeys.has(`${fact.target.path}#${fact.target.name}`),
+    )
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, context.limits.maxSymbolEdges);
+
   // --- Product layer cap: keep the overview readable ---
   const productNodes = [...nodes.values()].filter((node) => node.granularity === "product");
   const MAX_PRODUCT_PAGES = 60;
@@ -869,6 +953,44 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
     }
   }
 
+  // Symbol edges: file -> symbol ownership and symbol -> symbol calls/renders.
+  for (const key of allowedSymbolKeys) {
+    const { path, name } = splitSymbolKey(key);
+    const file = context.parsed.get(path);
+    const symbol = file?.symbols.find((candidate) => candidate.name === name);
+    addEdge(
+      fileNodeId(path),
+      symbolNodeId(path, name),
+      "contains",
+      1,
+      evidenceMetadata(
+        undefined,
+        symbol?.range ?? { path, startLine: 1 },
+        file?.parserId ?? "typescript-ast",
+        "ir.symbol-declaration",
+        "exact",
+        `symbol ${name} declared in ${path}`,
+      ),
+    );
+  }
+
+  for (const fact of symbolFacts) {
+    addEdge(
+      symbolNodeId(fact.sourcePath, fact.sourceSymbol),
+      symbolNodeId(fact.target.path, fact.target.name),
+      fact.type,
+      fact.confidence,
+      evidenceMetadata(
+        { via: fact.target.name },
+        fact.range,
+        context.parsed.get(fact.sourcePath)?.parserId ?? "typescript-ast",
+        fact.ruleId,
+        fact.evidenceKind,
+        fact.reason,
+      ),
+    );
+  }
+
   // ORM -> database edges. The link is only drawn when a schema analyzer
   // actually detected a provider; otherwise it stays a low-confidence inference.
   for (const orm of ormNodes) {
@@ -987,12 +1109,14 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
       services: nodeList.filter((node) => node.type === "service").length,
       components: nodeList.filter((node) => node.type === "component").length,
       databaseNodes: database.length,
+      symbols: allowedSymbolKeys.size,
+      symbolEdges: symbolFacts.length,
     },
   };
 }
 
 function rankOrder(granularity: GraphGranularity): number {
-  return { product: 0, architecture: 1, modules: 2, files: 3 }[granularity];
+  return GRANULARITY_ORDER[granularity];
 }
 
 function mergeEdgeMetadata(

@@ -26,7 +26,7 @@ import {
   type GraphLayout,
 } from "@/lib/graph/model";
 import { useWorkspace } from "@/features/workspace/store";
-import { connectionCounts, neighborsOf, visibleEdges, visibleNodes } from "@/features/workspace/selectors";
+import { connectionCounts, layoutFor, neighborsOf, visibleEdges, visibleNodes } from "@/features/workspace/selectors";
 import { EDGE_PRIORITY, pathToTraceSetup } from "@/features/workspace/trace";
 import { buildGitHubFileUrl } from "@/lib/github/url";
 import { EDGE_TYPE_META, NODE_TYPE_META } from "./node-meta";
@@ -62,7 +62,8 @@ function buildElements(
   onToggleGroup: (groupId: GraphGroupId) => void,
   cache: ElementCache,
 ): BuiltElements {
-  const layout = graph.layouts[state.granularity];
+  const layout = layoutFor(graph, state.granularity);
+  if (!layout) return { nodes: [], edges: [], absolute: new Map() };
   const nodes = visibleNodes(graph, state.granularity, state.filters);
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const visibleIds = new Set(byId.keys());
@@ -458,7 +459,9 @@ function GraphCanvasInner() {
 
   const fitToContent = useCallback(() => {
     if (!graph || !viewportWidth || !viewportHeight) return;
-    const target = computeFraming(graph.layouts[state.granularity], viewportWidth, viewportHeight);
+    const layout = layoutFor(graph, state.granularity);
+    if (!layout) return;
+    const target = computeFraming(layout, viewportWidth, viewportHeight);
     void flow.setViewport(target, { duration: 420 });
   }, [graph, state.granularity, viewportWidth, viewportHeight, flow]);
 
@@ -476,7 +479,9 @@ function GraphCanvasInner() {
     const key = `${graph.commitSha}:${state.granularity}`;
     if (lastFitKey.current === key) return;
     lastFitKey.current = key;
-    const framing = computeFraming(graph.layouts[state.granularity], viewportWidth, viewportHeight);
+    const layout = layoutFor(graph, state.granularity);
+    if (!layout) return;
+    const framing = computeFraming(layout, viewportWidth, viewportHeight);
     void flow.setViewport(framing, { duration: 420 });
   }, [graph, state.granularity, state.focusNodeId, state.trace, viewportWidth, viewportHeight, flow]);
 
@@ -500,7 +505,8 @@ function GraphCanvasInner() {
     if (!trace || !graph || !viewportWidth || !viewportHeight) return;
     const step = trace.steps[trace.index];
     if (!step) return;
-    const layout = graph.layouts[state.granularity];
+    const layout = layoutFor(graph, state.granularity);
+    if (!layout) return;
     const bounds = boundsForNodeIds(layout, step.nodeIds);
     if (!bounds) return;
     const framing = computeFramingForBounds(bounds, viewportWidth, viewportHeight, {
@@ -670,6 +676,8 @@ function GraphCanvasInner() {
         dispatch({ type: "ui/granularity", granularity: "modules" });
       } else if (key === "4") {
         dispatch({ type: "ui/granularity", granularity: "files" });
+      } else if (key === "5") {
+        dispatch({ type: "ui/granularity", granularity: "symbols" });
       }
     };
     window.addEventListener("keydown", handler);

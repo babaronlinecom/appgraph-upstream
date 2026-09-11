@@ -202,6 +202,7 @@ const MERMAID_NODE_COLORS: Record<GraphNodeType, string> = {
   middleware: "#9aa6b8",
   config: "#8f98a3",
   module: "#7d8797",
+  symbol: "#6fd3c7",
   group: "#8f98a3",
 };
 

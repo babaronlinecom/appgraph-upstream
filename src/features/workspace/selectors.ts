@@ -6,6 +6,7 @@ import {
   type GraphEdgeType,
   type GraphGranularity,
   type GraphGroupId,
+  type GraphLayout,
 } from "@/lib/graph/model";
 import type { WorkspaceFilters } from "./store";
 
@@ -112,4 +113,21 @@ export function formatDuration(ms: number): string {
 export function shortRepoName(fullName: string): { owner: string; repo: string } {
   const [owner, repo] = fullName.split("/");
   return { owner: owner ?? fullName, repo: repo ?? "" };
+}
+
+/**
+ * Layout lookup with a graceful fallback: documents cached before a
+ * granularity existed (e.g. "symbols") must not crash the canvas.
+ */
+export function layoutFor(
+  graph: AppGraphDocument,
+  granularity: GraphGranularity,
+): GraphLayout | undefined {
+  return (
+    graph.layouts[granularity] ??
+    graph.layouts.files ??
+    graph.layouts.modules ??
+    graph.layouts.architecture ??
+    graph.layouts.product
+  );
 }

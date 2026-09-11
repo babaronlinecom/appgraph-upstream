@@ -9,6 +9,7 @@ import type {
   IrFetchPath,
   IrImport,
   IrJsxTag,
+  IrReExport,
   IrRouteHandler,
   IrSourceRange,
   IrSymbol,
@@ -70,6 +71,27 @@ function isHookName(name: string): boolean {
   return /^use[A-Z0-9]/.test(name);
 }
 
+/**
+ * Walks up the AST to find the nearest declared symbol containing a node.
+ * Used to attribute calls/JSX/env reads to the function or method they live in.
+ */
+function enclosingSymbolName(node: ts.Node): string | undefined {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isFunctionDeclaration(current) && current.name) return current.name.text;
+    if (ts.isClassDeclaration(current) && current.name) return current.name.text;
+    if (ts.isMethodDeclaration(current) && ts.isIdentifier(current.name)) return current.name.text;
+    if (ts.isVariableDeclaration(current) && ts.isIdentifier(current.name)) {
+      const initializer = current.initializer;
+      if (initializer && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))) {
+        return current.name.text;
+      }
+    }
+    current = current.parent;
+  }
+  return undefined;
+}
+
 function textOfExpression(node: ts.Expression): string | null {
   if (ts.isIdentifier(node)) return node.text;
   if (ts.isPropertyAccessExpression(node)) {
@@ -111,6 +133,7 @@ export function parseSource(
   const sourceFile = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true, scriptKindFor(path));
 
   const imports: IrImport[] = [];
+  const reExports: IrReExport[] = [];
   const exports: IrExport[] = [];
   const symbols: IrSymbol[] = [];
   const components = new Set<string>();
@@ -209,19 +232,61 @@ export function parseSource(
 
     // Re-exports with module specifier
     if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier)) {
-      const exported = node.exportClause && ts.isNamedExports(node.exportClause)
-        ? node.exportClause.elements.map((element) => element.name.text)
-        : ["*"];
-      imports.push({
-        specifier: node.moduleSpecifier.text,
-        kind: "named",
-        importedNames: exported,
-        localNames: [],
-        typeOnly: Boolean(node.isTypeOnly),
-        range: rangeOf(node),
-      });
-      for (const name of exported) {
-        exports.push({ name, kind: "re-export", range: rangeOf(node) });
+      if (node.exportClause && ts.isNamedExports(node.exportClause)) {
+        const sourceNames = node.exportClause.elements.map(
+          (element) => element.propertyName?.text ?? element.name.text,
+        );
+        const exportedNames = node.exportClause.elements.map((element) => element.name.text);
+        // File-level dependency fact (used by the file graph and resolvers).
+        imports.push({
+          specifier: node.moduleSpecifier.text,
+          kind: "named",
+          importedNames: sourceNames,
+          localNames: exportedNames,
+          typeOnly: Boolean(node.isTypeOnly),
+          range: rangeOf(node),
+        });
+        reExports.push({
+          specifier: node.moduleSpecifier.text,
+          sourceNames,
+          exportedNames,
+          range: rangeOf(node),
+        });
+        for (const name of exportedNames) {
+          exports.push({ name, kind: "re-export", range: rangeOf(node) });
+        }
+      } else if (node.exportClause && ts.isNamespaceExport(node.exportClause)) {
+        imports.push({
+          specifier: node.moduleSpecifier.text,
+          kind: "namespace",
+          importedNames: ["*"],
+          localNames: [node.exportClause.name.text],
+          typeOnly: Boolean(node.isTypeOnly),
+          range: rangeOf(node),
+        });
+        reExports.push({
+          specifier: node.moduleSpecifier.text,
+          sourceNames: "*",
+          exportedNames: [node.exportClause.name.text],
+          range: rangeOf(node),
+        });
+        exports.push({ name: node.exportClause.name.text, kind: "re-export", range: rangeOf(node) });
+      } else {
+        // export * from "..."
+        imports.push({
+          specifier: node.moduleSpecifier.text,
+          kind: "named",
+          importedNames: ["*"],
+          localNames: [],
+          typeOnly: Boolean(node.isTypeOnly),
+          range: rangeOf(node),
+        });
+        reExports.push({
+          specifier: node.moduleSpecifier.text,
+          sourceNames: "*",
+          exportedNames: [],
+          range: rangeOf(node),
+        });
       }
     }
 
@@ -351,6 +416,7 @@ export function parseSource(
     language: options.language ?? "typescript",
     parserId: options.parserId ?? "typescript-ast",
     imports,
+    reExports,
     exports,
     defaultExport,
     symbols,
@@ -378,7 +444,7 @@ function collectEnvReads(
   const push = (name: string, at: ts.Node) => {
     if (sink.length >= MAX_ENV_READS_PER_FILE) return;
     if (sink.some((read) => read.name === name && read.range.startLine === rangeOf(at).startLine)) return;
-    sink.push({ name, range: rangeOf(at) });
+    sink.push({ name, symbol: enclosingSymbolName(at), range: rangeOf(at) });
   };
 
   if (ts.isPropertyAccessExpression(node)) {
@@ -463,7 +529,7 @@ function collectCalls(
   if (ts.isCallExpression(node) && sink.length < MAX_CALLS_PER_FILE) {
     const name = textOfExpression(node.expression);
     if (name && name.length <= 80 && !name.includes("=>")) {
-      sink.push({ name, range: rangeOf(node) });
+      sink.push({ name, symbol: enclosingSymbolName(node), range: rangeOf(node) });
     }
   }
   ts.forEachChild(node, (child) => collectCalls(child, sink, rangeOf));
@@ -479,7 +545,7 @@ function collectJsxTags(
     if (ts.isIdentifier(tag)) name = tag.text;
     else if (ts.isPropertyAccessExpression(tag)) name = textOfExpression(tag);
     if (name && /^[A-Z]/.test(name.split(".")[0] ?? "")) {
-      sink.push({ name, range: rangeOf(node) });
+      sink.push({ name, symbol: enclosingSymbolName(node), range: rangeOf(node) });
     }
   };
   if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {

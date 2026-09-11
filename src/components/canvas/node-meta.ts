@@ -1,6 +1,7 @@
 import {
   Atom,
   Box,
+  Braces,
   Database,
   FileCode2,
   Globe,
@@ -30,6 +31,7 @@ export const NODE_TYPE_META: Record<GraphNodeType, NodeTypeMeta> = {
   middleware: { label: "Middleware", icon: ShieldCheck, color: "#9aa6b8" },
   config: { label: "Config", icon: Settings2, color: "#8f98a3" },
   module: { label: "Module", icon: FileCode2, color: "#7d8797" },
+  symbol: { label: "Symbol", icon: Braces, color: "#6fd3c7" },
   group: { label: "Group", icon: Box, color: "#8f98a3" },
 };
 
@@ -48,6 +50,7 @@ export const EDGE_TYPE_META: Record<GraphEdgeType, EdgeTypeMeta> = {
   writes: { label: "writes", color: "#d19a54", description: "Writes to a data store" },
   routes_to: { label: "routes to", color: "#8b7fd4", description: "Requests an internal API route" },
   uses: { label: "uses", color: "#6b7280", description: "Uses a service or dependency" },
+  contains: { label: "contains", color: "#4d5563", description: "File declares this symbol" },
   depends_on: { label: "depends on", color: "#4a5261", dashed: true, description: "Weak or type-level dependency" },
   unknown: { label: "related", color: "#4a5261", dashed: true, description: "Inferred relationship" },
 };

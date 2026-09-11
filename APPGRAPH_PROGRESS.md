@@ -25,9 +25,22 @@ The authoritative plan is `APPGRAPH_ROADMAP.md` (kept in-repo, statuses updated 
   (`tests/fixtures/sample-negative`) proving unused imports, look-alike `db.user.create`
   objects, doc strings and commented `process.env` never become semantic edges.
 
-### Batch 2 — next
-- AG-SYM-001..005: first-class symbol nodes, accurate local symbol resolution,
-  barrel/re-export resolver, call-graph confidence levels, symbol drill-down UI.
+### Batch 2 — Symbol intelligence (DONE)
+- New `symbols` granularity (`product → architecture → modules → files → symbols`)
+  and `symbol` node type; file→symbol `contains` edges; `maxSymbolNodes`/`maxSymbolEdges`.
+- `symbol-resolver.ts`: named/default/namespace imports, multi-hop barrel re-exports
+  with aliases and cycle protection, same-file calls, enclosing-symbol attribution.
+- Symbol edges carry confidence + evidence rules: `symbol.resolved-call` (0.95 exact),
+  `symbol.namespace-member-call` (0.90), `react.jsx-symbol-render` (0.93),
+  `symbol.local-call`/`react.jsx-local-render` (0.85/0.88).
+- Only proven symbols become nodes (unused declarations are excluded).
+- UI: Symbols granularity (Explorer, palette, shortcut `5`), symbol Inspector with
+  Evidence, trace/impact/path work on symbol nodes.
+- Analysis version bumped to `0.3.0`; layouts include the new granularity.
+
+### Batch 3 — next (Data architecture)
+- AG-DATA-001..007: data model nodes (model/field/enum), Prisma fields/relations,
+  Drizzle schema parser, SQL DDL parser, code↔model read/write targets, ERD view.
 
 ## Status
 
@@ -134,7 +147,7 @@ analysis → semantic architecture graph → interactive canvas.
 ## Verification status (last run)
 
 - `npm run typecheck` — clean.
-- `npm test` — 91 tests passed (11 files, incl. parser-registry, IR, evidence and
+- `npm test` — 101 tests passed (12 files, incl. symbol resolver, IR, evidence and
   negative-regression suites; live GitHub/manual tests skipped by default).
 - `npm run build` — succeeded (standalone output only when `NEXT_STANDALONE=1`, i.e. in Docker).
 - `npx playwright test` — 8/8 passed: landing (2), workspace interactions, advanced exploration

@@ -271,6 +271,52 @@ describe("fixture repository analysis", () => {
     expect(document.capabilities.integrations).toBeGreaterThan(0);
   });
 
+  it("builds a resolved symbol graph with source evidence", () => {
+    const symbolNodes = document.nodes.filter((node) => node.type === "symbol");
+    expect(symbolNodes.length).toBeGreaterThan(3);
+    expect(document.stats.symbols).toBe(symbolNodes.length);
+    expect(document.stats.symbolEdges).toBeGreaterThan(0);
+
+    const dashboardSymbol = document.nodes.find(
+      (node) => node.id === "symbol:src/app/dashboard/page.tsx#DashboardPage",
+    );
+    const projectListSymbol = document.nodes.find(
+      (node) => node.id === "symbol:src/components/ProjectList.tsx#ProjectList",
+    );
+    expect(dashboardSymbol).toBeTruthy();
+    expect(projectListSymbol).toBeTruthy();
+
+    const renderFact = edge(dashboardSymbol!.id, projectListSymbol!.id, "renders");
+    expect(renderFact).toBeTruthy();
+    expect(renderFact!.metadata?.evidence?.[0]?.ruleId).toBe("react.jsx-symbol-render");
+    expect(renderFact!.metadata?.evidence?.[0]?.path).toBe("src/app/dashboard/page.tsx");
+
+    const contains = edge("file:src/app/dashboard/page.tsx", dashboardSymbol!.id, "contains");
+    expect(contains).toBeTruthy();
+    expect(contains!.metadata?.evidence?.[0]?.ruleId).toBe("ir.symbol-declaration");
+    expect(contains!.metadata?.evidence?.[0]?.kind).toBe("exact");
+
+    const apiGet = document.nodes.find(
+      (node) => node.id === "symbol:src/app/api/projects/route.ts#GET",
+    );
+    const listProjects = document.nodes.find(
+      (node) => node.id === "symbol:src/services/project-service.ts#listProjects",
+    );
+    expect(apiGet).toBeTruthy();
+    expect(listProjects).toBeTruthy();
+    const call = edge(apiGet!.id, listProjects!.id, "calls");
+    expect(call).toBeTruthy();
+    expect(call!.metadata?.evidence?.[0]?.ruleId).toBe("symbol.resolved-call");
+    expect(call!.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("never creates symbol nodes for unused declarations", () => {
+    const buttonSymbols = document.nodes.filter(
+      (node) => node.type === "symbol" && node.path === "src/components/Button.tsx",
+    );
+    expect(buttonSymbols).toEqual([]);
+  });
+
   function apiNode() {
     return document.nodes.find((node) => node.type === "api");
   }

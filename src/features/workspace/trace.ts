@@ -1,8 +1,9 @@
-import type {
-  AppGraphDocument,
-  AppGraphEdge,
-  AppGraphNode,
-  GraphEdgeType,
+import {
+  GRANULARITY_ORDER,
+  type AppGraphDocument,
+  type AppGraphEdge,
+  type AppGraphNode,
+  type GraphEdgeType,
 } from "@/lib/graph/model";
 
 /**
@@ -17,6 +18,7 @@ export const EDGE_PRIORITY: Record<GraphEdgeType, number> = {
   writes: 4,
   uses: 5,
   imports: 6,
+  contains: 7,
   depends_on: 8,
   unknown: 9,
 };
@@ -389,7 +391,7 @@ export function buildTour(graph: AppGraphDocument, limit = 8): TourSetup {
 }
 
 export function rankOfGranularity(granularity: AppGraphNode["granularity"]): number {
-  return { product: 0, architecture: 1, modules: 2, files: 3 }[granularity];
+  return GRANULARITY_ORDER[granularity];
 }
 
 /** Highest granularity rank among the given nodes (used to keep traces visible). */

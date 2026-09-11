@@ -51,7 +51,13 @@ export async function computeLayouts(
   edges: AppGraphEdge[],
 ): Promise<Record<GraphGranularity, GraphLayout>> {
   const layouts = createEmptyLayouts();
-  const granularities: GraphGranularity[] = ["product", "architecture", "modules", "files"];
+  const granularities: GraphGranularity[] = [
+    "product",
+    "architecture",
+    "modules",
+    "files",
+    "symbols",
+  ];
 
   for (const granularity of granularities) {
     const visibleNodes = nodes.filter((node) => visibleAt(node, granularity));

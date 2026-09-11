@@ -14,6 +14,8 @@ export interface AnalysisLimits {
   maxGraphEdges: number;
   maxComponents: number;
   maxExternalNodes: number;
+  maxSymbolNodes: number;
+  maxSymbolEdges: number;
   maxSnippetLines: number;
   maxFetchAttempts: number;
 }
@@ -26,10 +28,12 @@ export const DEFAULT_LIMITS: AnalysisLimits = {
   analysisTimeoutMs: 100_000,
   githubRequestTimeoutMs: 20_000,
   fetchConcurrency: 10,
-  maxGraphNodes: 520,
-  maxGraphEdges: 1_600,
+  maxGraphNodes: 900,
+  maxGraphEdges: 2_400,
   maxComponents: 170,
   maxExternalNodes: 40,
+  maxSymbolNodes: 320,
+  maxSymbolEdges: 900,
   maxSnippetLines: 48,
   maxFetchAttempts: 360,
 };

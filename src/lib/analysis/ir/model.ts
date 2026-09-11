@@ -45,6 +45,19 @@ export interface IrImport {
   range: IrSourceRange;
 }
 
+/**
+ * Re-export facts used by the barrel resolver:
+ * `export * from "./x"` and `export { a, b as c } from "./x"`.
+ */
+export interface IrReExport {
+  specifier: string;
+  /** Source-side names, or "*" for `export * from`. */
+  sourceNames: string[] | "*";
+  /** Exported (public) names, aligned with sourceNames when not "*". */
+  exportedNames: string[];
+  range: IrSourceRange;
+}
+
 export type IrExportKind =
   | "function"
   | "class"
@@ -63,12 +76,16 @@ export interface IrExport {
 
 export interface IrJsxTag {
   name: string;
+  /** Enclosing declared symbol at the usage site, when known. */
+  symbol?: string;
   range: IrSourceRange;
 }
 
 export interface IrCall {
   /** Callee text exactly as written: `createProject`, `db.project.create`. */
   name: string;
+  /** Enclosing declared symbol at the call site, when known. */
+  symbol?: string;
   range: IrSourceRange;
 }
 
@@ -84,6 +101,8 @@ export interface IrFetchPath {
 
 export interface IrEnvRead {
   name: string;
+  /** Enclosing declared symbol at the read site, when known. */
+  symbol?: string;
   range: IrSourceRange;
 }
 
@@ -92,6 +111,7 @@ export interface FileIR {
   language: LanguageId;
   parserId: string;
   imports: IrImport[];
+  reExports: IrReExport[];
   exports: IrExport[];
   defaultExport?: IrExport;
   /** Declared symbols with source ranges (draft for the symbol-level graph). */

@@ -247,7 +247,7 @@ docker run -p 3000:3000 -e GITHUB_TOKEN=... appgraph
 | `L` | Toggle legend |
 | `Space` | Play/pause the active trace |
 | `Esc` | Stop trace / clear selection |
-| `1–4` | Product / Architecture / Modules / Files |
+| `1–5` | Product / Architecture / Modules / Files / Symbols |
 
 ## Known limitations
 
