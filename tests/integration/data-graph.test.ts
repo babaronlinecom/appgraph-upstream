@@ -118,6 +118,43 @@ describe("data graph from a Drizzle + SQL repository", () => {
     expect(evidence?.path).toBe("migrations/002_members.sql");
   });
 
+  it("parses composite keys, unique indexes and indexes from table config", () => {
+    const memberships = node("data:drizzle:memberships")!;
+    expect(memberships).toBeTruthy();
+    expect(memberships.metadata.primaryKey).toEqual(["userId", "teamId"]);
+    expect(memberships.metadata.uniqueConstraints).toEqual([["userId", "teamId"]]);
+    expect(memberships.metadata.indexes).toEqual([["teamId"]]);
+    expect(memberships.metadata.indexDetails).toEqual(
+      expect.arrayContaining([
+        { name: "memberships_pair_idx", columns: ["userId", "teamId"], unique: true },
+        { name: "memberships_team_idx", columns: ["teamId"], unique: false },
+      ]),
+    );
+    const userId = fieldsOf("data:drizzle:memberships").find((field) => field.name === "userId")!;
+    expect(userId.primaryKey).toBe(true);
+  });
+
+  it("reports exact source lines for schema facts", async () => {
+    const schemaSource = await fs.readFile(
+      path.join(fixtureRoot("sample-data"), "src", "db", "schema.ts"),
+      "utf8",
+    );
+    const lines = schemaSource.split("\n");
+    const emailLine = lines.findIndex((line) => line.includes('email: text("email")')) + 1;
+    const users = node("data:drizzle:users")!;
+    const email = fieldsOf("data:drizzle:users").find((field) => field.name === "email")!;
+    expect(emailLine).toBeGreaterThan(0);
+    expect((users.metadata.fields as Array<{ name: string; line: number }>).find((field) => field.name === "email")?.line).toBe(emailLine);
+
+    const sqlSource = await fs.readFile(
+      path.join(fixtureRoot("sample-data"), "migrations", "002_members.sql"),
+      "utf8",
+    );
+    const fk = edge("data:sql:members", "data:sql:teams", "references")!;
+    const expectedLine = sqlSource.split("\n").findIndex((line) => line.includes("ADD CONSTRAINT")) + 1;
+    expect(fk.metadata?.evidence?.[0]?.startLine).toBe(expectedLine);
+  });
+
   it("reports every schema format it actually parsed", () => {
     expect(document.capabilities.databaseSchemas).toEqual(
       expect.arrayContaining(["drizzle", "sql"]),

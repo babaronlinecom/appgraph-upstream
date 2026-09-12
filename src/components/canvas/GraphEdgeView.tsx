@@ -5,7 +5,22 @@ import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, useStore, type EdgeProp
 import { EDGE_TYPE_META } from "./node-meta";
 import type { GraphFlowEdge } from "./flow-types";
 
+function selfLoopPath(
+  sourceX: number,
+  sourceY: number,
+  targetX: number,
+  targetY: number,
+): [string, number, number] {
+  const lift = Math.max(64, Math.abs(targetY - sourceY) + 48);
+  const path = `M ${sourceX},${sourceY} C ${sourceX + 90},${sourceY - lift} ${
+    targetX - 90
+  },${targetY - lift} ${targetX},${targetY}`;
+  return [path, (sourceX + targetX) / 2, Math.min(sourceY, targetY) - lift * 0.78];
+}
+
 export const GraphEdgeView = memo(function GraphEdgeView({
+  source,
+  target,
   sourceX,
   sourceY,
   targetX,
@@ -20,16 +35,21 @@ export const GraphEdgeView = memo(function GraphEdgeView({
   const edge = data?.edge;
   const meta = edge ? EDGE_TYPE_META[edge.type] : EDGE_TYPE_META.imports;
 
-  const [path, labelX, labelY] = getSmoothStepPath({
-    sourceX,
-    sourceY,
-    targetX,
-    targetY,
-    sourcePosition,
-    targetPosition,
-    borderRadius: 14,
-    offset: 26,
-  });
+  // Self-referencing relations (e.g. Prisma User.manager/reports) render as a
+  // dedicated loop above the node instead of a degenerate path.
+  const isSelfLoop = source === target;
+  const [path, labelX, labelY] = isSelfLoop
+    ? selfLoopPath(sourceX, sourceY, targetX, targetY)
+    : getSmoothStepPath({
+        sourceX,
+        sourceY,
+        targetX,
+        targetY,
+        sourcePosition,
+        targetPosition,
+        borderRadius: 14,
+        offset: 26,
+      });
 
   const dimmed = Boolean(data?.dimmed);
   const highlighted = Boolean(data?.highlighted) || Boolean(selected);

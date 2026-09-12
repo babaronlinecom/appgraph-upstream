@@ -16,6 +16,12 @@ export interface DataRelationFact {
   /** Owning field on the other side, when declared (`@relation(...)`). */
   ownerField?: string;
   mappedBy?: string;
+  /** Named relation (`@relation("Name", ...)`) for disambiguation. */
+  name?: string;
+  /** True when the relation points back to the same model (self-relation). */
+  self?: boolean;
+  /** Exact source range of the relation declaration (constraint/attribute line). */
+  range?: IrSourceRange;
 }
 
 export interface DataFieldFact {
@@ -44,6 +50,8 @@ export interface DataModelFact {
   primaryKey: string[];
   uniqueConstraints: string[][];
   indexes: string[][];
+  /** Named indexes (Drizzle/SQL) with uniqueness flag. */
+  indexDetails?: Array<{ name?: string; columns: string[]; unique: boolean }>;
 }
 
 export interface DataEnumFact {
@@ -66,6 +74,8 @@ export interface DataSchemaDetection {
   provider: DataProviderFact | null;
   models: DataModelFact[];
   enums: DataEnumFact[];
+  /** Honest coverage notes, e.g. partial migration replay. */
+  notes?: string[];
 }
 
 export interface DataSchemaContext {

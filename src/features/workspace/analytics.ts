@@ -405,12 +405,13 @@ export function toMermaidErd(graph: AppGraphDocument): string | null {
     const source = nodeById.get(edge.source);
     const target = nodeById.get(edge.target);
     if (!source || !target || source.type !== "data_model" || target.type !== "data_model") continue;
-    const pair = `${source.id}->${target.id}`;
+    // Distinct relations between the same pair (author/editor) must both render.
+    const label = typeof edge.metadata?.field === "string" ? edge.metadata.field : "references";
+    const pair = `${source.id}->${target.id}:${label}`;
     if (renderedPairs.has(pair)) continue;
     renderedPairs.add(pair);
     const cardinality = edge.metadata?.cardinality === "many" ? "many" : "one";
     const optional = edge.metadata?.optional === true;
-    const label = typeof edge.metadata?.field === "string" ? edge.metadata.field : "references";
     const targetSide = cardinality === "many" ? "o{" : optional ? "o|" : "||";
     lines.push(`  ${safeId(source.label)} ||--${targetSide} ${safeId(target.label)} : "${label}"`);
   }

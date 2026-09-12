@@ -1,5 +1,15 @@
 import { relations } from "drizzle-orm";
-import { integer, pgEnum, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
+import {
+  index,
+  integer,
+  pgEnum,
+  pgTable,
+  primaryKey,
+  serial,
+  text,
+  timestamp,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 
 export const roleEnum = pgEnum("role", ["admin", "member"]);
 
@@ -17,6 +27,22 @@ export const posts = pgTable("posts", {
     .notNull()
     .references(() => users.id),
 });
+
+export const memberships = pgTable(
+  "memberships",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    teamId: integer("team_id").notNull(),
+    role: text("role").default("member").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.teamId] }),
+    uniqueIndex("memberships_pair_idx").on(table.userId, table.teamId),
+    index("memberships_team_idx").on(table.teamId),
+  ],
+);
 
 export const usersRelations = relations(users, ({ many }) => ({
   posts: many(posts),

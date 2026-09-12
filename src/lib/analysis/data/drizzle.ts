@@ -12,11 +12,25 @@ import type {
 const MAX_TABLES = 120;
 const MAX_COLUMNS = 80;
 const MAX_ENUMS = 60;
-const TABLE_FACTORIES: Record<string, string> = {
+
+const TABLE_FACTORY_DIALECT: Record<string, string> = {
   pgTable: "postgresql",
   mysqlTable: "mysql",
   sqliteTable: "sqlite",
 };
+
+const DRIZZLE_MODULE_PATTERN = /^drizzle-orm(\/|$)/;
+
+interface DrizzleBindings {
+  /** local name -> imported factory name (pgTable / mysqlTable / sqliteTable) */
+  factories: Map<string, string>;
+  /** local names bound to pgEnum */
+  enums: Set<string>;
+  /** local names bound to relations() */
+  relations: Set<string>;
+  /** local name -> imported helper name (index/uniqueIndex/unique/primaryKey/foreignKey) */
+  helpers: Map<string, string>;
+}
 
 interface TableDraft {
   name: string;
@@ -27,6 +41,9 @@ interface TableDraft {
   fields: DataFieldFact[];
   relations: Array<{ field: string; targetVar: string; cardinality: "one" | "many" }>;
   primaryKey: string[];
+  uniqueConstraints: string[][];
+  indexes: string[][];
+  indexDetails: Array<{ name?: string; columns: string[]; unique: boolean }>;
 }
 
 function scriptKind(path: string): ts.ScriptKind {
@@ -37,21 +54,91 @@ function scriptKind(path: string): ts.ScriptKind {
   return ts.ScriptKind.JS;
 }
 
-function callChain(node: ts.Expression): { base: string; methods: Array<{ name: string; args: ts.NodeArray<ts.Expression> }> } {
+/**
+ * Proves Drizzle usage through the TypeScript AST: only symbols actually
+ * imported from `drizzle-orm/*` are treated as Drizzle factories/helpers.
+ * A locally defined function named `pgTable` is NOT Drizzle.
+ */
+export function collectDrizzleBindings(sourceFile: ts.SourceFile): DrizzleBindings | null {
+  const imported = new Map<string, string>();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    const specifier = ts.isStringLiteralLike(statement.moduleSpecifier)
+      ? statement.moduleSpecifier.text
+      : "";
+    if (!DRIZZLE_MODULE_PATTERN.test(specifier)) continue;
+    const clause = statement.importClause;
+    if (!clause || clause.isTypeOnly) continue;
+    const bindings = clause.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      // Alias support: import { pgTable as table } from "drizzle-orm/pg-core"
+      imported.set(element.name.text, element.propertyName?.text ?? element.name.text);
+    }
+  }
+  if (imported.size === 0) return null;
+
+  const factories = new Map<string, string>();
+  const enums = new Set<string>();
+  const relations = new Set<string>();
+  const helpers = new Map<string, string>();
+  for (const [localName, importedName] of imported) {
+    if (TABLE_FACTORY_DIALECT[importedName]) factories.set(localName, importedName);
+    else if (importedName === "pgEnum") enums.add(localName);
+    else if (importedName === "relations") relations.add(localName);
+    else if (
+      importedName === "index" ||
+      importedName === "uniqueIndex" ||
+      importedName === "unique" ||
+      importedName === "primaryKey" ||
+      importedName === "foreignKey"
+    ) {
+      helpers.set(localName, importedName);
+    }
+  }
+
+  return { factories, enums, relations, helpers };
+}
+
+/** True when a Drizzle factory imported from drizzle-orm is actually called. */
+function callsImportedFactory(sourceFile: ts.SourceFile, factories: Map<string, string>): boolean {
+  let found = false;
+  const visit = (node: ts.Node) => {
+    if (found) return;
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && factories.has(node.expression.text)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return found;
+}
+
+function callChain(node: ts.Expression): {
+  base: string;
+  methods: Array<{ name: string; args: ts.NodeArray<ts.Expression> }>;
+  baseCall: ts.CallExpression | null;
+} {
   const methods: Array<{ name: string; args: ts.NodeArray<ts.Expression> }> = [];
   let current: ts.Expression = node;
+  let baseCall: ts.CallExpression | null = null;
   while (ts.isCallExpression(current)) {
     if (ts.isPropertyAccessExpression(current.expression)) {
       methods.unshift({ name: current.expression.name.text, args: current.arguments });
       current = current.expression.expression;
     } else {
-      // Plain identifier callee, e.g. `serial("id")`.
+      baseCall = current;
       current = current.expression;
       break;
     }
   }
-  const base = ts.isIdentifier(current) ? current.text : ts.isPropertyAccessExpression(current) ? current.name.text : "";
-  return { base, methods };
+  const base = ts.isIdentifier(current)
+    ? current.text
+    : ts.isPropertyAccessExpression(current)
+      ? current.name.text
+      : "";
+  return { base, methods, baseCall };
 }
 
 function stringArg(node: ts.Expression | undefined): string | null {
@@ -67,16 +154,67 @@ function skipParentheses(node: ts.ConciseBody): ts.ConciseBody {
   return current;
 }
 
+function targetFromArrow(node: ts.Expression | undefined): string | null {
+  if (!node || !ts.isArrowFunction(node)) return null;
+  const body = skipParentheses(node.body);
+  if (ts.isPropertyAccessExpression(body)) {
+    return ts.isIdentifier(body.expression) ? body.expression.text : null;
+  }
+  return null;
+}
+
+/** Collects `table.column` references in expression order. */
+function columnsFromArguments(args: readonly ts.Expression[], tableVar: string): string[] {
+  const columns: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isPropertyAccessExpression(node)) {
+      if (ts.isIdentifier(node.expression) && node.expression.text === tableVar && ts.isIdentifier(node.name)) {
+        columns.push(node.name.text);
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const arg of args) visit(arg);
+  return columns;
+}
+
+function columnsFromPrimaryKey(argument: ts.Expression | undefined, tableVar: string): string[] {
+  if (!argument || !ts.isObjectLiteralExpression(argument)) return [];
+  for (const property of argument.properties) {
+    if (!ts.isPropertyAssignment(property)) continue;
+    const name = property.name.getText();
+    if (name !== "columns") continue;
+    const value = skipParentheses(property.initializer);
+    if (ts.isArrayLiteralExpression(value)) {
+      return columnsFromArguments(value.elements, tableVar);
+    }
+  }
+  return [];
+}
+
+function indexNameOf(entry: ts.CallExpression): string | undefined {
+  // index("name").on(...) — the name is the first argument of the inner call.
+  const inner = ts.isPropertyAccessExpression(entry.expression) ? entry.expression.expression : entry;
+  if (ts.isCallExpression(inner)) {
+    return stringArg(inner.arguments[0]) ?? undefined;
+  }
+  return undefined;
+}
+
 export function parseDrizzleModule(path: string, content: string): {
   tables: DataModelFact[];
   enums: DataEnumFact[];
   provider: string | null;
 } {
   const sourceFile = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true, scriptKind(path));
+  const bindings = collectDrizzleBindings(sourceFile);
   const drafts = new Map<string, TableDraft>();
   const enums: DataEnumFact[] = [];
   const lineOf = (node: ts.Node) =>
     sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+
+  if (!bindings) return { tables: [], enums: [], provider: null };
 
   // First pass: enum variable name -> enum name, so columns typed with an enum
   // variable can be classified without guessing.
@@ -89,7 +227,7 @@ export function parseDrizzleModule(path: string, content: string): {
       const callee = ts.isIdentifier(declaration.initializer.expression)
         ? declaration.initializer.expression.text
         : "";
-      if (callee === "pgEnum") {
+      if (bindings.enums.has(callee)) {
         enumVariableToName.set(
           declaration.name.text,
           stringArg(declaration.initializer.arguments[0]) ?? declaration.name.text,
@@ -98,7 +236,13 @@ export function parseDrizzleModule(path: string, content: string): {
     }
   }
 
-  const relationCalls: Array<{ fromVar: string; field: string; targetVar: string; cardinality: "one" | "many"; line: number }> = [];
+  const relationCalls: Array<{
+    fromVar: string;
+    field: string;
+    targetVar: string;
+    cardinality: "one" | "many";
+    line: number;
+  }> = [];
 
   for (const statement of sourceFile.statements) {
     if (!ts.isVariableStatement(statement)) continue;
@@ -112,8 +256,10 @@ export function parseDrizzleModule(path: string, content: string): {
           ? initializer.expression.name.text
           : "";
 
-      // pgTable("users", { ... }) / mysqlTable / sqliteTable
-      if (TABLE_FACTORIES[calleeName] && drafts.size < MAX_TABLES) {
+      // pgTable("users", { ... }, (table) => [...]) — local name must be an
+      // actual import from drizzle-orm/* (aliases supported).
+      const factoryImport = bindings.factories.get(calleeName);
+      if (factoryImport && drafts.size < MAX_TABLES) {
         const tableName = stringArg(initializer.arguments[0]) ?? declaration.name.text;
         const columnsObject = initializer.arguments[1];
         const fields: DataFieldFact[] = [];
@@ -142,7 +288,12 @@ export function parseDrizzleModule(path: string, content: string): {
               // `.references(() => users.id)` — the arrow target identifies the table.
               const target = targetFromArrow(referenceMethod.args[0]);
               if (target) {
-                relation = { target, cardinality: "one", optional: !notNull };
+                relation = {
+                  target,
+                  cardinality: "one",
+                  optional: !notNull,
+                  range: { path, startLine: columnLine },
+                };
               }
             }
 
@@ -162,21 +313,100 @@ export function parseDrizzleModule(path: string, content: string): {
           }
         }
 
-        drafts.set(declaration.name.text, {
+        const draft: TableDraft = {
           name: tableName,
           variable: declaration.name.text,
-          dialect: TABLE_FACTORIES[calleeName],
+          dialect: TABLE_FACTORY_DIALECT[factoryImport],
           line: lineOf(statement),
           endLine: lineOf(statement),
           fields,
           relations: [],
           primaryKey: fields.filter((field) => field.primaryKey).map((field) => field.name),
-        });
+          uniqueConstraints: [],
+          indexes: [],
+          indexDetails: [],
+        };
+
+        // Third argument: table config (indexes, composite keys, foreign keys).
+        const config = initializer.arguments[2];
+        if (config && ts.isArrowFunction(config)) {
+          const parameter = config.parameters[0];
+          const tableVar = parameter && ts.isIdentifier(parameter.name) ? parameter.name.text : "table";
+          const body = skipParentheses(config.body);
+          const entries: ts.Expression[] = ts.isObjectLiteralExpression(body)
+            ? body.properties.filter(ts.isPropertyAssignment).map((property) => property.initializer)
+            : ts.isArrayLiteralExpression(body)
+              ? [...body.elements]
+              : [];
+
+          for (const entry of entries) {
+            if (!ts.isCallExpression(entry)) continue;
+            // The helper name lives on the base call of a chain:
+            // `uniqueIndex("x").on(...)` -> expression = PropertyAccess(innerCall, "on").
+            const baseCall =
+              ts.isPropertyAccessExpression(entry.expression) && ts.isCallExpression(entry.expression.expression)
+                ? entry.expression.expression
+                : entry;
+            const helperLocal = ts.isIdentifier(baseCall.expression)
+              ? baseCall.expression.text
+              : ts.isPropertyAccessExpression(baseCall.expression)
+                ? baseCall.expression.name.text
+                : "";
+            const helper = bindings.helpers.get(helperLocal);
+            if (!helper) continue;
+            const entryLine = lineOf(entry);
+
+            if (helper === "primaryKey") {
+              const columns = columnsFromPrimaryKey(entry.arguments[0], tableVar);
+              draft.primaryKey = [...new Set([...draft.primaryKey, ...columns])];
+              for (const column of columns) {
+                const field = draft.fields.find((candidate) => candidate.name === column);
+                if (field) field.primaryKey = true;
+              }
+            } else if (helper === "index" || helper === "uniqueIndex" || helper === "unique") {
+              const columns = columnsFromArguments(entry.arguments, tableVar);
+              if (columns.length === 0) continue;
+              const unique = helper !== "index";
+              draft.indexDetails.push({ name: indexNameOf(entry), columns, unique });
+              if (unique) draft.uniqueConstraints.push(columns);
+              else draft.indexes.push(columns);
+            } else if (helper === "foreignKey") {
+              const argument = entry.arguments[0];
+              if (!argument || !ts.isObjectLiteralExpression(argument)) continue;
+              let ownerColumn: string | undefined;
+              let target: string | undefined;
+              for (const property of argument.properties) {
+                if (!ts.isPropertyAssignment(property)) continue;
+                const name = property.name.getText();
+                const value = skipParentheses(property.initializer);
+                if (name === "columns" && ts.isArrayLiteralExpression(value)) {
+                  ownerColumn = columnsFromArguments(value.elements, tableVar)[0];
+                }
+                if (name === "foreignColumns" && ts.isArrayLiteralExpression(value)) {
+                  target = arrowTargetFromExpression(value.elements[0]);
+                }
+              }
+              const field = draft.fields.find((candidate) => candidate.name === ownerColumn);
+              if (field && target) {
+                field.kind = "relation";
+                field.relation = {
+                  target,
+                  cardinality: "one",
+                  optional: field.optional,
+                  ownerField: "id",
+                  range: { path, startLine: entryLine },
+                };
+              }
+            }
+          }
+        }
+
+        drafts.set(declaration.name.text, draft);
         continue;
       }
 
       // pgEnum("role", ["admin", "user"])
-      if (calleeName === "pgEnum" && enums.length < MAX_ENUMS) {
+      if (bindings.enums.has(calleeName) && enums.length < MAX_ENUMS) {
         const valuesNode = initializer.arguments[1];
         const values: string[] = [];
         if (valuesNode && ts.isArrayLiteralExpression(valuesNode)) {
@@ -193,7 +423,7 @@ export function parseDrizzleModule(path: string, content: string): {
       }
 
       // relations(users, ({ many }) => ({ posts: many(posts) }))
-      if (calleeName === "relations" && initializer.arguments[0] && ts.isIdentifier(initializer.arguments[0])) {
+      if (bindings.relations.has(calleeName) && initializer.arguments[0] && ts.isIdentifier(initializer.arguments[0])) {
         const fromVar = initializer.arguments[0].text;
         const callback = initializer.arguments[1];
         if (callback && ts.isArrowFunction(callback)) {
@@ -205,7 +435,9 @@ export function parseDrizzleModule(path: string, content: string): {
                 ? property.initializer.expression.text
                 : "";
               const targetNode = property.initializer.arguments[0];
-              if (!targetNode || !ts.isIdentifier(targetNode) || (helper !== "one" && helper !== "many")) continue;
+              if (!targetNode || !ts.isIdentifier(targetNode) || (helper !== "one" && helper !== "many")) {
+                continue;
+              }
               relationCalls.push({
                 fromVar,
                 field: property.name.getText(sourceFile).replace(/["']/g, ""),
@@ -244,7 +476,13 @@ export function parseDrizzleModule(path: string, content: string): {
       list: relation.cardinality === "many",
       primaryKey: false,
       unique: false,
-      relation: { target, cardinality: relation.cardinality, optional: false },
+      relation: {
+        target,
+        cardinality: relation.cardinality,
+        optional: false,
+        ...(target === table.name ? { self: true } : {}),
+        range: { path, startLine: relation.line },
+      },
       range: { path, startLine: relation.line },
     });
   }
@@ -256,39 +494,41 @@ export function parseDrizzleModule(path: string, content: string): {
     fieldCount: draft.fields.length,
     fields: draft.fields,
     ...(draft.name !== draft.variable ? { mappedName: draft.variable } : {}),
-    primaryKey: draft.primaryKey,
-    uniqueConstraints: [],
-    indexes: [],
+    primaryKey: [...new Set(draft.primaryKey)],
+    uniqueConstraints: draft.uniqueConstraints,
+    indexes: draft.indexes,
+    indexDetails: draft.indexDetails,
   }));
 
   const provider = drafts.size > 0 ? [...drafts.values()][0].dialect : null;
   return { tables, enums, provider };
 }
 
-function targetFromArrow(node: ts.Expression | undefined): string | null {
-  if (!node || !ts.isArrowFunction(node)) return null;
-  const body = skipParentheses(node.body);
-  if (ts.isPropertyAccessExpression(body)) {
-    return ts.isIdentifier(body.expression) ? body.expression.text : null;
-  }
-  return null;
+function arrowTargetFromExpression(node: ts.Expression | undefined): string | undefined {
+  if (!node || !ts.isPropertyAccessExpression(node)) return undefined;
+  return ts.isIdentifier(node.expression) ? node.expression.text : undefined;
 }
 
 export const drizzleSchemaAnalyzer: DataSchemaAnalyzer = {
   id: "drizzle-schema",
-  version: "1.0.0",
+  version: "2.0.0",
   label: "Drizzle schema",
   capabilities: {
     formats: ["drizzle"],
     providers: ["postgresql", "mysql", "sqlite"],
-    concepts: ["table", "column", "relation", "enum", "reference"],
+    concepts: ["table", "column", "relation", "enum", "reference", "index", "composite key"],
   },
 
   detect(context: DataSchemaContext): boolean {
     for (const [path, content] of context.files) {
-      if (!/\.(ts|tsx|js|mjs)$/i.test(path)) continue;
+      if (!/\.(ts|tsx|js|jsx|mjs|cjs)$/i.test(path)) continue;
+      // `includes` is only a cheap pre-filter; the real proof is AST-based.
       if (!content.includes("drizzle-orm")) continue;
-      if (/(pgTable|mysqlTable|sqliteTable)\s*\(/.test(content)) return true;
+      const sourceFile = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true, scriptKind(path));
+      const bindings = collectDrizzleBindings(sourceFile);
+      if (!bindings || bindings.factories.size === 0) continue;
+      if (!callsImportedFactory(sourceFile, bindings.factories)) continue;
+      return true;
     }
     return false;
   },
@@ -296,18 +536,20 @@ export const drizzleSchemaAnalyzer: DataSchemaAnalyzer = {
   analyze(context: DataSchemaContext): DataSchemaDetection[] {
     const detections: DataSchemaDetection[] = [];
     for (const [path, content] of context.files) {
-      if (!/\.(ts|tsx|js|mjs)$/i.test(path)) continue;
+      if (!/\.(ts|tsx|js|jsx|mjs|cjs)$/i.test(path)) continue;
       if (!content.includes("drizzle-orm")) continue;
-      if (!/(pgTable|mysqlTable|sqliteTable)\s*\(/.test(content)) continue;
+      const sourceFile = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true, scriptKind(path));
+      const bindings = collectDrizzleBindings(sourceFile);
+      if (!bindings || bindings.factories.size === 0) continue;
+      if (!callsImportedFactory(sourceFile, bindings.factories)) continue;
+
       const result = parseDrizzleModule(path, content);
       if (result.tables.length === 0 && result.enums.length === 0) continue;
       detections.push({
         analyzerId: this.id,
         format: "drizzle",
         files: [path],
-        provider: result.provider
-          ? { raw: result.provider, range: { path, startLine: 1 } }
-          : null,
+        provider: result.provider ? { raw: result.provider, range: { path, startLine: 1 } } : null,
         models: result.tables,
         enums: result.enums,
       });

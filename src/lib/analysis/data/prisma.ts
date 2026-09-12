@@ -148,7 +148,9 @@ export function parsePrismaSchema(path: string, content: string): {
       const optional = typeRaw.endsWith("?");
       const baseType = typeRaw.replace(/[?[\]]/g, "");
       const isEnum = enumNames.has(baseType);
-      const isRelation = modelNames.has(baseType) && baseType !== block.name;
+      // Self-relations (User.manager / User.reports) are valid: the target may
+      // be the model itself.
+      const isRelation = modelNames.has(baseType);
       const kind: DataFieldFact["kind"] = isRelation
         ? "relation"
         : isEnum
@@ -160,13 +162,18 @@ export function parsePrismaSchema(path: string, content: string): {
       const relationMatch = attributes.match(/@relation\(([^)]*)\)/);
       let relation: DataRelationFact | undefined;
       if (isRelation) {
-        const fieldsMatch = relationMatch?.[1].match(/fields:\s*\[([^\]]*)\]/);
+        const args = relationMatch?.[1] ?? "";
+        const fieldsMatch = args.match(/fields:\s*\[([^\]]*)\]/);
         const ownerField = fieldsMatch?.[1].split(",")[0]?.trim();
+        const nameMatch = args.match(/^\s*"([^"]+)"/) ?? args.match(/\bname:\s*"([^"]+)"/);
         relation = {
           target: baseType,
           cardinality: list ? "many" : "one",
           optional,
           ...(ownerField ? { ownerField } : {}),
+          ...(nameMatch ? { name: nameMatch[1] } : {}),
+          ...(baseType === block.name ? { self: true } : {}),
+          range: { path, startLine: entry.line },
         };
       }
 

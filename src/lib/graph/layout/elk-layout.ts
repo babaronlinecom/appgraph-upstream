@@ -100,6 +100,9 @@ async function layoutSingle(
   const seenPairs = new Set<string>();
   const elkEdges = [];
   for (const edge of edges) {
+    // Self-loops (e.g. Prisma self-relations) are rendered by the canvas but
+    // must not drive the layered layout.
+    if (edge.source === edge.target) continue;
     const key = `${edge.source}=>${edge.target}`;
     if (seenPairs.has(key)) continue;
     seenPairs.add(key);

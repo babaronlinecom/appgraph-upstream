@@ -279,7 +279,17 @@ Do not break older exported JSON without either:
 
 ## AG-CORE-004 — Split `graph-builder.ts`
 **Priority:** P0  
-**Status:** TODO
+**Status:** IN_PROGRESS (Hardening batch)
+
+Extracted modules under `src/lib/analysis/builders/`: `evidence.ts`
+(rule/kind/reason helpers + metadata merge), `edge-accumulator.ts`
+(endpoint/self-loop/dedupe invariants), `usage.ts` (import local usage +
+DB operation aggregation), `import-graph.ts` (generic imports/renders/calls/
+reads/writes/integration/env edges), `symbol-graph.ts`, `data-graph.ts`,
+`integration-graph.ts` (integration nodes, schema database node, ORM→DB link)
+and `ids.ts`. `graph-builder.ts` now orchestrates projections, caps, framework
+adapters and stats only (~600 lines of responsibility removed). Remaining:
+`api/`, `async/`, `infra/` builders and structured diagnostics (AG-CODE-004).
 
 The graph builder must not become the permanent dumping ground for every ecosystem.
 
@@ -545,14 +555,17 @@ Fields do not need to always appear as full canvas nodes. They can live inside e
 
 ## AG-DATA-002 — Prisma schema parser
 **Priority:** P1  
-**Status:** DONE (Batch 3)
+**Status:** DONE (Hardening batch complete)
 
 `src/lib/analysis/data/prisma.ts` parses datasource/provider (with line),
 models, scalar/enum/relation fields, optional/list modifiers, `@id`, `@@id`,
 `@unique`, `@@unique`, `@relation(fields, references)`, `@default`, `@map`,
-`@@map`, `@@index`, enums and relation cardinality. Two-pass parser resolves
-model names before classifying fields. Fixture coverage: relation, enum,
-`@@map`, `@@index`, composite PK.
+`@@map`, `@@index`, enums and relation cardinality. Hardening: self-relations
+(`User.manager`/`User.reports`) are kept, named relations
+(`@relation("Name", ...)`) are preserved in metadata, multiple relations
+between the same model pair never collapse (per-field edge identity), and each
+relation records the exact attribute line as evidence. Fixture:
+`tests/fixtures/sample-prisma-relations`.
 
 Parse `schema.prisma` deterministically.
 
@@ -595,13 +608,20 @@ Acceptance fixture:
 
 ## AG-DATA-003 — Drizzle schema parser
 **Priority:** P1  
-**Status:** DONE (Batch 3)
+**Status:** DONE (Hardening batch complete)
 
 `src/lib/analysis/data/drizzle.ts` (TypeScript AST, schema code is never
-executed) parses `pgTable`/`mysqlTable`/`sqliteTable`, columns with
-`.primaryKey()`, `.notNull()`, `.unique()`, `.default()`, `.references(() => t.col)`,
-`pgEnum` values, and `relations()` `one`/`many` declarations; dialect maps to a
-provider. Detection requires a real `drizzle-orm` import + table factory call.
+executed). Detection is proven through the AST: only identifiers actually
+imported from `drizzle-orm/*` are treated as factories/helpers (aliases like
+`pgTable as table` supported); a locally defined `pgTable()` or a `"drizzle-orm"`
+string/comment does NOT trigger detection, and an import that is never called
+is not a detection either. Parses `pgTable`/`mysqlTable`/`sqliteTable`, column
+chains (`.primaryKey/.notNull/.unique/.default/.references(() => t.col)`),
+`pgEnum`, `relations()` one/many, and the table config callback:
+composite `primaryKey({ columns: [...] })`, `uniqueIndex`/`unique`, `index`
+and `foreignKey({ columns, foreignColumns })` with named index details.
+Negative tests cover fake factories, shadowing, unused imports and string
+mentions.
 
 Support common Drizzle patterns:
 - `pgTable`;
@@ -624,14 +644,19 @@ Use AST parsing only.
 
 ## AG-DATA-004 — SQL DDL parser
 **Priority:** P1  
-**Status:** DONE (Batch 3)
+**Status:** DONE (Hardening batch complete)
 
-`src/lib/analysis/data/sql-ddl.ts` statically parses `.sql` files (fetched as
-schema candidates): `CREATE TABLE [IF NOT EXISTS]`, columns, inline/table-level
-`PRIMARY KEY`, `UNIQUE`, `REFERENCES`, `DEFAULT`, and
-`ALTER TABLE ... ADD ... FOREIGN KEY`. All migration files are merged in path
-order into one current model so cross-file foreign keys resolve. SQL is never
-executed.
+`src/lib/analysis/data/sql-ddl.ts` replays statements in file order across
+migrations: `CREATE TABLE [IF NOT EXISTS]`, columns with multi-word types
+(`DOUBLE PRECISION`, `TIMESTAMP WITH TIME ZONE`, `CHARACTER VARYING(36)`,
+`NUMERIC(10, 2)`), inline/table-level `PRIMARY KEY`, `UNIQUE`, `REFERENCES`,
+`DEFAULT`, `ALTER TABLE ADD COLUMN / DROP COLUMN / RENAME COLUMN / ADD
+FOREIGN KEY`, `DROP TABLE`, `CREATE [UNIQUE] INDEX`. Comments (line, block,
+nested) and string literals are masked before parsing, so commented-out DDL
+and keywords inside strings can never create facts, while every column and
+constraint reports its exact source line. The result is explicitly labelled a
+best-effort snapshot (`SCHEMA_PARTIAL_REPLAY` notes) rather than a full current
+schema. SQL is never executed.
 
 Support `.sql` schema/migration files:
 - `CREATE TABLE`;
@@ -2821,6 +2846,28 @@ new parser-registry, IR and negative-regression suites), `npm run build`,
 Batch 3 verification: `npm run typecheck`, `npm test` (115 tests incl. data
 parser units, data-graph integration and updated fixture assertions),
 `npm run build`, `npx playwright test` (10 E2E incl. the Data tab).
+
+### Correctness Hardening Batch (requested before Batch 4)
+- Prisma: self-relations, named relations, multiple relations per model pair
+  (per-field `references` edge identity), exact relation line evidence; fixture
+  `sample-prisma-relations`; self-loop edges render on the canvas and are
+  excluded from ELK layout input.
+- Drizzle: AST-proven import detection (aliases, no substring-based detection,
+  fake/local `pgTable` rejected, unused imports rejected), table config
+  composite PK/unique/index/foreignKey, negative tests.
+- SQL DDL: comment/string masking, ordered replay (`ADD/DROP/RENAME COLUMN`,
+  `DROP TABLE`, `CREATE [UNIQUE] INDEX`), multi-word types, exact per-item
+  lines, dropped-column index cleanup, partial-replay notes.
+- Graph builder: extracted into `builders/` (evidence, edge accumulator,
+  usage, import/symbol/data/integration projections).
+- Evidence: all `reads/writes/references/calls/renders` edges carry situated
+  evidence; edges are not created when the fact cannot be proven.
+- Tests: Prisma self relation, Drizzle fake `pgTable`, aliased imports,
+  composite indexes/PK, commented SQL DDL, multi-word SQL types, ALTER
+  migration sequence, exact evidence lines.
+
+Batch verification: `npm run typecheck`, `npm test` (141 tests),
+`npm run build`, `npx playwright test`.
 
 Only after these three batches should the team start Python/Go support.
 

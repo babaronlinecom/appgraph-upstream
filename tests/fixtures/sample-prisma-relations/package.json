@@ -1,0 +1,10 @@
+{
+  "name": "sample-prisma-relations",
+  "private": true,
+  "dependencies": {
+    "@prisma/client": "6.2.0"
+  },
+  "devDependencies": {
+    "typescript": "5.7.2"
+  }
+}

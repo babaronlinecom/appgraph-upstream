@@ -57,6 +57,26 @@ The authoritative plan is `APPGRAPH_ROADMAP.md` (kept in-repo, statuses updated 
   **Mermaid ER** export and schema JSON export.
 - Analysis version bumped to `0.4.0`.
 
+### Correctness Hardening Batch (DONE)
+- Prisma: self-relations, named relations, multiple relations between one pair
+  (per-field edge ids; no collapsing), exact relation-line evidence; fixture
+  `sample-prisma-relations`; canvas self-loops (excluded from ELK input).
+- Drizzle: detection proven via AST imports from `drizzle-orm/*` (aliases
+  supported); fake local `pgTable`, unused imports and string/comment mentions
+  rejected; table config composite PK / uniqueIndex / index / foreignKey with
+  named index details.
+- SQL DDL: comment+string masking lexer, ordered statement replay
+  (`ADD/DROP/RENAME COLUMN`, `DROP TABLE`, `CREATE [UNIQUE] INDEX`), multi-word
+  types (`DOUBLE PRECISION`, `TIMESTAMP WITH TIME ZONE`, `NUMERIC(10, 2)`, …),
+  exact per-item source lines, dropped-column index cleanup, explicit
+  `SCHEMA_PARTIAL_REPLAY` notes.
+- Graph builder split into `src/lib/analysis/builders/` (evidence, edge
+  accumulator, usage, import-graph, symbol-graph, data-graph,
+  integration-graph, ids) — behavior unchanged, 141 tests green.
+- Evidence: every new `reads/writes/references/calls/renders` edge has situated
+  evidence; unprovable edges are not created.
+- Analysis version bumped to `0.5.0`.
+
 ### Batch 4 — next (Monorepos + large-repo performance)
 - AG-MONO-001..004, AG-PERF-001/004/005/006.
 
@@ -165,9 +185,8 @@ analysis → semantic architecture graph → interactive canvas.
 ## Verification status (last run)
 
 - `npm run typecheck` — clean.
-- `npm test` — 115 tests passed (14 files; data parsers, data-graph integration,
-  symbol resolver, IR, evidence and negative-regression suites; live GitHub tests
-  skipped by default).
+- `npm test` — 141 tests passed (18 files; data/symbol/IR/evidence hardening,
+  negative regressions; live GitHub tests skipped by default).
 - `npm run build` — succeeded (standalone output only when `NEXT_STANDALONE=1`, i.e. in Docker).
 - `npx playwright test` — 8/8 passed: landing (2), workspace interactions, advanced exploration
   (analytics/exports, hover card/legend/context menu, trace/impact/path/tour), mobile sheets,

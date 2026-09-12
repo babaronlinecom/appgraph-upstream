@@ -1,26 +1,26 @@
 import type {
   AppGraphEdge,
-  AppGraphEdgeMetadata,
   AppGraphNode,
   AppGraphNodeMetadata,
-  EdgeEvidence,
-  EdgeEvidenceKind,
-  GraphEdgeType,
   GraphGranularity,
   GraphGroupId,
 } from "@/lib/graph/model";
-import { GRAPH_GROUPS, GRANULARITY_ORDER } from "@/lib/graph/model";
-import { classifyDatabaseOperation, findIntegrationForSpecifier, type DatabaseOperation } from "./integrations";
+import { GRANULARITY_ORDER } from "@/lib/graph/model";
 import { matchRouteTemplate } from "./frameworks/registry";
-import { providerLabel } from "./data/prisma";
 import { analyzerRegistries } from "./registries";
-import { buildSymbolGraph, type SymbolFact } from "./resolvers/symbol-resolver";
-import type { DataModelFact, DataSchemaDetection } from "./data/registry";
-import type { IrSourceRange } from "./ir/model";
+import { createEdgeAccumulator } from "./builders/edge-accumulator";
+import { addDataEdges, projectDataGraph } from "./builders/data-graph";
+import { addImportGraphEdges } from "./builders/import-graph";
+import {
+  addOrmDatabaseEdges,
+  createSchemaDatabaseNode,
+  projectIntegrations,
+} from "./builders/integration-graph";
+import { addSymbolEdges, projectSymbols } from "./builders/symbol-graph";
+import { fileNodeId, FILE_NODE_PREFIX } from "./builders/ids";
 import type {
   AnalysisWarningDraft,
   ClassifiedFile,
-  DetectedIntegration,
   ParsedFile,
   RepositoryContext,
 } from "./types";
@@ -44,30 +44,8 @@ export interface GraphBuildResult {
 }
 
 export const CONFIG_NODE_ID = "config:environment";
-export const FILE_NODE_PREFIX = "file:";
-export const SYMBOL_NODE_PREFIX = "symbol:";
 
-export function fileNodeId(path: string): string {
-  return `${FILE_NODE_PREFIX}${path}`;
-}
-
-export function symbolNodeId(path: string, name: string): string {
-  return `${SYMBOL_NODE_PREFIX}${path}#${name}`;
-}
-
-function splitSymbolKey(key: string): { path: string; name: string } {
-  const index = key.lastIndexOf("#");
-  return { path: key.slice(0, index), name: key.slice(index + 1) };
-}
-
-const GROUP_ORDER = new Map(GRAPH_GROUPS.map((group) => [group.id, group.order]));
-
-function slug(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "unknown";
-}
+export { fileNodeId, FILE_NODE_PREFIX };
 
 function titleCase(value: string): string {
   return value
@@ -83,7 +61,10 @@ function humanizeSegment(segment: string): string {
   return titleCase(segment.replace(/[-_]/g, " "));
 }
 
-function labelForRoute(route: string | undefined, fallbackPath: string): { label: string; subtitle?: string } {
+function labelForRoute(
+  route: string | undefined,
+  fallbackPath: string,
+): { label: string; subtitle?: string } {
   if (!route) return { label: titleCase(baseName(fallbackPath)) };
   if (route === "/") return { label: "Home", subtitle: "/" };
   const segments = route.split("/").filter(Boolean);
@@ -159,108 +140,6 @@ function languageFor(path: string): string {
   return "javascript";
 }
 
-function localUsage(
-  parsed: ParsedFile,
-  localNames: string[],
-): { usedInJsx: boolean; jsxTag?: ParsedFile["jsxTags"][number]; calls: ParsedFile["calls"] } {
-  const jsxTag = parsed.jsxTags.find((tag) =>
-    localNames.some((name) => tag.name === name || tag.name.startsWith(`${name}.`)),
-  );
-  const calls = parsed.calls.filter((call) =>
-    localNames.some((name) => call.name === name || call.name.startsWith(`${name}.`)),
-  );
-  return { usedInJsx: Boolean(jsxTag), jsxTag, calls };
-}
-
-interface DatabaseAggregate {
-  hasRead: boolean;
-  hasWrite: boolean;
-  unknown: boolean;
-  count: number;
-  readCall?: ParsedFile["calls"][number];
-  writeCall?: ParsedFile["calls"][number];
-}
-
-function aggregateOperations(calls: ParsedFile["calls"]): DatabaseAggregate {
-  const aggregate: DatabaseAggregate = { hasRead: false, hasWrite: false, unknown: false, count: calls.length };
-  for (const call of calls) {
-    const operation: DatabaseOperation = classifyDatabaseOperation(call.name);
-    if (operation === "read") {
-      aggregate.hasRead = true;
-      aggregate.readCall ??= call;
-    } else if (operation === "write") {
-      aggregate.hasWrite = true;
-      aggregate.writeCall ??= call;
-    } else {
-      aggregate.unknown = true;
-    }
-  }
-  return aggregate;
-}
-
-const MAX_EVIDENCE_PER_EDGE = 6;
-
-function evidenceFrom(
-  range: IrSourceRange | undefined,
-  analyzerId: string,
-  ruleId: string,
-  kind: EdgeEvidenceKind,
-  reason?: string,
-): EdgeEvidence[] | undefined {
-  if (!range) return undefined;
-  return [
-    {
-      path: range.path,
-      startLine: range.startLine,
-      endLine: range.endLine,
-      analyzerId,
-      ruleId,
-      kind,
-      ...(reason ? { reason } : {}),
-    },
-  ];
-}
-
-function evidenceMetadata(
-  base: AppGraphEdgeMetadata | undefined,
-  range: IrSourceRange | undefined,
-  analyzerId: string,
-  ruleId: string,
-  kind: EdgeEvidenceKind,
-  reason?: string,
-): AppGraphEdgeMetadata | undefined {
-  const evidence = evidenceFrom(range, analyzerId, ruleId, kind, reason);
-  if (!evidence) return base;
-  return {
-    ...(base ?? {}),
-    evidence: [...(base?.evidence ?? []), ...evidence].slice(0, MAX_EVIDENCE_PER_EDGE),
-  };
-}
-
-function integrationGroup(integration: DetectedIntegration): GraphGroupId {
-  return integration.definition.kind === "database" ? "data" : "external";
-}
-
-function integrationNodeId(integration: DetectedIntegration): string {
-  if (integration.definition.kind === "database" || integration.definition.databaseLabel) {
-    return `db:${slug(integration.definition.databaseLabel ?? integration.definition.label)}`;
-  }
-  if (integration.definition.kind === "orm") {
-    return `orm:${slug(integration.definition.label)}`;
-  }
-  return `ext:${slug(integration.definition.id)}`;
-}
-
-function integrationNodeType(integration: DetectedIntegration): AppGraphNode["type"] {
-  if (integration.definition.kind === "database") return "database";
-  if (integration.definition.kind === "orm") return "service";
-  return "external";
-}
-
-function integrationGranularity(integration: DetectedIntegration): GraphGranularity {
-  return integration.definition.kind === "orm" ? "architecture" : "product";
-}
-
 function descriptionFor(
   type: AppGraphNode["type"],
   file: ClassifiedFile,
@@ -301,9 +180,18 @@ function descriptionFor(
   }
 }
 
+function rankOrder(granularity: GraphGranularity): number {
+  return GRANULARITY_ORDER[granularity];
+}
+
+function stripUndefined<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
+}
+
 /**
  * Turns a parsed repository context into the semantic AppGraph document.
- * Files are evidence; nodes are semantic entities.
+ * This function orchestrates projections only; each ecosystem lives in its own
+ * builder under `builders/` (files, integrations, symbols, data, imports).
  */
 export async function buildGraph(context: RepositoryContext): Promise<GraphBuildResult> {
   const warnings: AnalysisWarningDraft[] = [...context.warnings];
@@ -419,72 +307,43 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
     nodeRank.set(node.id, rankOrder(rank));
   }
 
-  // --- External service & database nodes ---
-  const externalNodes = new Set<string>();
-  const integrationByNodeId = new Map<string, DetectedIntegration>();
-  for (const integration of context.integrations) {
-    const id = integrationNodeId(integration);
-    integrationByNodeId.set(id, integration);
-    if (nodes.has(id)) continue;
-    const definition = integration.definition;
-    const node: AppGraphNode = {
-      id,
-      type: integrationNodeType(integration),
-      label: definition.databaseLabel ?? definition.label,
-      subtitle: definition.kind === "database" ? "Database" : definition.category,
-      confidence: integration.confidence,
-      granularity: integrationGranularity(integration),
-      metadata: {
-        group: integrationGroup(integration),
-        integrationKind: definition.kind,
-        description:
-          definition.kind === "database"
-            ? "Data store inferred from SDK usage. Operations show reads and writes."
-            : definition.kind === "orm"
-              ? "ORM layer detected. Connects application code to the database."
-              : `External service detected from ${definition.packages.join(", ")} imports.`,
-        packages: definition.packages,
-        imports: integration.files.slice(0, 24),
-        url: definitionUrl(definition.id),
-      },
-    };
+  // --- Integration projection (external services, databases, ORMs) ---
+  const integrationProjection = projectIntegrations(context);
+  for (const node of integrationProjection.nodes) {
+    if (nodes.has(node.id)) continue;
     nodes.set(node.id, node);
     nodeRank.set(node.id, rankOrder(node.granularity));
-    if (node.type === "external") externalNodes.add(node.id);
+  }
+  const databaseNodes: AppGraphNode[] = [...integrationProjection.databaseNodes];
+  const ormNodes: AppGraphNode[] = [...integrationProjection.ormNodes];
+
+  // Schema-backed database node (when integrations did not already create one).
+  if (databaseNodes.length === 0 && context.dataSchemas.length > 0) {
+    const schemaNode = createSchemaDatabaseNode(context);
+    if (schemaNode && !nodes.has(schemaNode.id)) {
+      nodes.set(schemaNode.id, schemaNode);
+      nodeRank.set(schemaNode.id, rankOrder(schemaNode.granularity));
+      databaseNodes.push(schemaNode);
+    }
   }
 
-  // --- ORM -> database link ---
-  const ormNodes = [...nodes.values()].filter((node) => node.id.startsWith("orm:"));
-  const databaseNodes = [...nodes.values()].filter((node) => node.type === "database" && !node.path);
-  if (databaseNodes.length === 0 && context.dataSchemas.length > 0) {
-    const detection = context.dataSchemas[0];
-    const label = detection.provider ? providerLabel(detection.provider.raw) : "Database";
-    const id = `db:${slug(label)}`;
-    const node: AppGraphNode = {
-      id,
-      type: "database",
-      label,
-      subtitle: "Database",
-      confidence: detection.provider ? 0.95 : 0.6,
-      granularity: "product",
-      metadata: {
-        group: "data",
-        integrationKind: "database",
-        description: detection.provider
-          ? `Database provider "${detection.provider.raw}" parsed from ${detection.files.join(", ")}.`
-          : `Database inferred from ${detection.format} schema. Provider could not be determined statically.`,
-        models: detection.models.map((model) => model.name).slice(0, 40),
-        modelCount: detection.models.length,
-        schemaAnalyzer: detection.analyzerId,
-        schemaFiles: detection.files,
-      },
-      source: detection.provider
-        ? { path: detection.provider.range.path, startLine: detection.provider.range.startLine }
-        : { path: detection.files[0], startLine: 1 },
-    };
-    nodes.set(id, node);
-    nodeRank.set(id, rankOrder("product"));
-    databaseNodes.push(node);
+  // --- Symbol projection (Batch 2) ---
+  const symbolProjection = projectSymbols(context);
+  for (const node of symbolProjection.nodes) {
+    if (nodes.has(node.id)) continue;
+    nodes.set(node.id, node);
+    nodeRank.set(node.id, rankOrder(node.granularity));
+  }
+
+  // --- Data projection (Batch 3) ---
+  const dataProjection = projectDataGraph(context);
+  for (const node of dataProjection.nodes) {
+    if (nodes.has(node.id)) continue;
+    nodes.set(node.id, node);
+    nodeRank.set(node.id, rankOrder(node.granularity));
+  }
+  for (const note of dataProjection.notes) {
+    warnings.push({ code: "SCHEMA_PARTIAL_REPLAY", severity: "info", message: note });
   }
 
   // --- Environment configuration node ---
@@ -514,162 +373,6 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
     };
     nodes.set(node.id, node);
     nodeRank.set(node.id, rankOrder(node.granularity));
-  }
-
-  // --- Symbol-level entities (Batch 2) ---
-  // Facts are only produced by the resolver when a call/JSX name actually
-  // matches a resolved import binding or a declaration in the same file.
-  const symbolGraph = buildSymbolGraph({
-    parsed: context.parsed,
-    resolvedImports: context.resolvedImports,
-  });
-  const symbolDegree = new Map<string, number>();
-  const symbolKeys = new Set<string>();
-  for (const fact of symbolGraph.facts) {
-    if (fact.target.name === "*") continue;
-    const sourceKey = `${fact.sourcePath}#${fact.sourceSymbol}`;
-    const targetKey = `${fact.target.path}#${fact.target.name}`;
-    symbolKeys.add(sourceKey);
-    symbolKeys.add(targetKey);
-    symbolDegree.set(sourceKey, (symbolDegree.get(sourceKey) ?? 0) + 1);
-    symbolDegree.set(targetKey, (symbolDegree.get(targetKey) ?? 0) + 1);
-  }
-
-  const allowedSymbolKeys = new Set(
-    [...symbolKeys]
-      .filter((key) => {
-        const { path, name } = splitSymbolKey(key);
-        return name !== "*" && context.parsed.has(path);
-      })
-      .sort((a, b) => (symbolDegree.get(b) ?? 0) - (symbolDegree.get(a) ?? 0))
-      .slice(0, context.limits.maxSymbolNodes),
-  );
-
-  for (const key of allowedSymbolKeys) {
-    const { path, name } = splitSymbolKey(key);
-    const file = context.parsed.get(path);
-    if (!file) continue;
-    const symbol = file.symbols.find((candidate) => candidate.name === name);
-    const classified = context.classified.get(path);
-    const node: AppGraphNode = {
-      id: symbolNodeId(path, name),
-      type: "symbol",
-      label: name,
-      subtitle: `${symbol?.kind ?? "symbol"} · ${path}`,
-      path,
-      symbol: name,
-      framework: classified?.framework,
-      confidence: 0.95,
-      granularity: "symbols",
-      metadata: {
-        group: classified?.group ?? "frontend",
-        role: "symbol",
-        symbolKind: symbol?.kind ?? "unknown",
-        description: `Symbol ${name} declared in ${path}${
-          symbol ? ` at line ${symbol.range.startLine}` : ""
-        }. Relationships come from resolved imports, calls and JSX usage.`,
-        imports: [],
-        exports: [],
-      },
-      source: symbol?.range ?? { path },
-    };
-    nodes.set(node.id, node);
-    nodeRank.set(node.id, rankOrder("symbols"));
-  }
-
-  const symbolFacts = symbolGraph.facts
-    .filter(
-      (fact) =>
-        fact.target.name !== "*" &&
-        allowedSymbolKeys.has(`${fact.sourcePath}#${fact.sourceSymbol}`) &&
-        allowedSymbolKeys.has(`${fact.target.path}#${fact.target.name}`),
-    )
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, context.limits.maxSymbolEdges);
-
-  // --- Data model & enum entities (Batch 3) ---
-  const dataModelNodes = new Map<string, { detection: DataSchemaDetection; model: DataModelFact }>();
-  const dataModelId = (format: string, name: string) => `data:${format}:${slug(name)}`;
-  const dataEnumId = (format: string, name: string) => `data-enum:${format}:${slug(name)}`;
-
-  for (const detection of context.dataSchemas) {
-    for (const model of detection.models) {
-      const id = dataModelId(detection.format, model.name);
-      if (nodes.has(id)) continue;
-      const relationCount = model.fields.filter((field) => field.kind === "relation").length;
-      const node: AppGraphNode = {
-        id,
-        type: "data_model",
-        label: model.name,
-        subtitle: `${model.kind === "table" ? "Table" : "Model"} · ${model.fields.length} field(s)`,
-        confidence: 0.95,
-        granularity: "architecture",
-        metadata: {
-          group: "data",
-          role: model.kind,
-          format: detection.format,
-          provider: detection.provider?.raw ?? null,
-          schemaFile: model.range.path,
-          mappedName: model.mappedName,
-          primaryKey: model.primaryKey,
-          uniqueConstraints: model.uniqueConstraints,
-          indexes: model.indexes,
-          fields: model.fields.slice(0, 60).map((field) => ({
-            name: field.name,
-            type: field.type,
-            kind: field.kind,
-            optional: field.optional,
-            list: field.list,
-            primaryKey: field.primaryKey,
-            unique: field.unique,
-            default: field.default,
-            map: field.map,
-            relation: field.relation
-              ? {
-                  target: field.relation.target,
-                  cardinality: field.relation.cardinality,
-                  optional: field.relation.optional,
-                  ownerField: field.relation.ownerField,
-                }
-              : undefined,
-            line: field.range.startLine,
-          })),
-          description: `${model.kind === "table" ? "Table" : "Model"} ${model.name} parsed from ${detection.format} schema (${model.fields.length} fields, ${relationCount} relation(s)).`,
-          imports: [],
-          exports: [],
-        },
-        source: model.range,
-      };
-      nodes.set(id, node);
-      nodeRank.set(id, rankOrder("architecture"));
-      dataModelNodes.set(id, { detection, model });
-    }
-
-    for (const enumFact of detection.enums) {
-      const id = dataEnumId(detection.format, enumFact.name);
-      if (nodes.has(id)) continue;
-      const node: AppGraphNode = {
-        id,
-        type: "data_enum",
-        label: enumFact.name,
-        subtitle: `Enum · ${enumFact.values.length} value(s)`,
-        confidence: 0.95,
-        granularity: "architecture",
-        metadata: {
-          group: "data",
-          role: "enum",
-          format: detection.format,
-          values: enumFact.values,
-          schemaFile: enumFact.range.path,
-          description: `Enum ${enumFact.name} (${enumFact.values.join(", ") || "no values"}) parsed from ${detection.format} schema.`,
-          imports: [],
-          exports: [],
-        },
-        source: enumFact.range,
-      };
-      nodes.set(id, node);
-      nodeRank.set(id, rankOrder("architecture"));
-    }
   }
 
   // --- Product layer cap: keep the overview readable ---
@@ -720,526 +423,15 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
     });
   }
 
-  // --- Edges ---
-  const edgeMap = new Map<string, AppGraphEdge>();
-  const addEdge = (
-    source: string,
-    target: string,
-    type: GraphEdgeType,
-    confidence: number,
-    metadata?: AppGraphEdgeMetadata,
-  ) => {
-    if (source === target) return;
-    if (!nodes.has(source) || !nodes.has(target)) return;
-    const id = `${source}->${target}:${type}`;
-    const existing = edgeMap.get(id);
-    if (existing) {
-      existing.confidence = Math.max(existing.confidence, confidence);
-      if (metadata) {
-        existing.metadata = mergeEdgeMetadata(existing.metadata, metadata);
-      }
-      return;
-    }
-    edgeMap.set(id, { id, source, target, type, confidence, metadata });
-  };
-
-  for (const [fromPath, parsed] of context.parsed) {
-    const sourceId = fileNodeId(fromPath);
-    if (!nodes.has(sourceId)) continue;
-    const resolved = context.resolvedImports.get(fromPath) ?? new Map();
-
-    const handledSpecifiers = new Set<string>();
-
-    for (const entry of parsed.imports) {
-      if (handledSpecifiers.has(entry.specifier)) continue;
-      handledSpecifiers.add(entry.specifier);
-      const targetPath = resolved.get(entry.specifier);
-      const usage = localUsage(parsed, entry.localNames);
-
-      if (targetPath && targetPath !== fromPath) {
-        const targetId = fileNodeId(targetPath);
-        const targetFile = context.classified.get(targetPath);
-        const targetNode = nodes.get(targetId);
-        if (!targetFile || !targetNode) continue;
-
-        if (entry.typeOnly) {
-          addEdge(
-            sourceId,
-            targetId,
-            "depends_on",
-            0.55,
-            evidenceMetadata(
-              { label: "type import" },
-              entry.range,
-              parsed.parserId,
-              "import.type-only",
-              "exact",
-              `import type from "${entry.specifier}"`,
-            ),
-          );
-          continue;
-        }
-
-        if (targetFile.category === "database" || targetFile.category === "schema") {
-          const aggregate = aggregateOperations(usage.calls);
-          if (aggregate.hasRead && aggregate.readCall) {
-            addEdge(
-              sourceId,
-              targetId,
-              "reads",
-              0.82,
-              evidenceMetadata(
-                { count: aggregate.count },
-                aggregate.readCall.range,
-                parsed.parserId,
-                "db.operation.classify",
-                "inferred",
-                `call ${aggregate.readCall.name} classified as a read`,
-              ),
-            );
-          }
-          if (aggregate.hasWrite && aggregate.writeCall) {
-            addEdge(
-              sourceId,
-              targetId,
-              "writes",
-              0.85,
-              evidenceMetadata(
-                { count: aggregate.count },
-                aggregate.writeCall.range,
-                parsed.parserId,
-                "db.operation.classify",
-                "inferred",
-                `call ${aggregate.writeCall.name} classified as a write`,
-              ),
-            );
-          }
-          if (!aggregate.hasRead && !aggregate.hasWrite) {
-            addEdge(
-              sourceId,
-              targetId,
-              "uses",
-              0.7,
-              evidenceMetadata(
-                { label: "database module" },
-                entry.range,
-                parsed.parserId,
-                "import.database-module",
-                "resolved",
-                `import from "${entry.specifier}"`,
-              ),
-            );
-          }
-          continue;
-        }
-
-        if (targetFile.category === "component" || targetFile.category === "hook") {
-          if (usage.usedInJsx && usage.jsxTag) {
-            addEdge(
-              sourceId,
-              targetId,
-              "renders",
-              0.92,
-              evidenceMetadata(
-                undefined,
-                usage.jsxTag.range,
-                parsed.parserId,
-                "react.jsx-usage",
-                "resolved",
-                `JSX <${usage.jsxTag.name}> bound to import "${entry.specifier}"`,
-              ),
-            );
-          } else if (usage.calls.length > 0 || targetFile.category === "hook") {
-            const call = usage.calls[0];
-            addEdge(
-              sourceId,
-              targetId,
-              "calls",
-              0.86,
-              evidenceMetadata(
-                call ? { via: call.name } : undefined,
-                call?.range ?? entry.range,
-                parsed.parserId,
-                call ? "symbol.imported-call" : "symbol.imported-reference",
-                "resolved",
-                call ? `call ${call.name}` : `import from "${entry.specifier}"`,
-              ),
-            );
-          } else {
-            addEdge(
-              sourceId,
-              targetId,
-              "imports",
-              0.9,
-              evidenceMetadata(
-                undefined,
-                entry.range,
-                parsed.parserId,
-                "import.resolve",
-                "exact",
-                `import from "${entry.specifier}"`,
-              ),
-            );
-          }
-          continue;
-        }
-
-        if (targetFile.category === "service" || targetFile.category === "state") {
-          if (usage.calls.length > 0) {
-            const call = usage.calls[0];
-            addEdge(
-              sourceId,
-              targetId,
-              "calls",
-              0.85,
-              evidenceMetadata(
-                { via: call.name },
-                call.range,
-                parsed.parserId,
-                "symbol.imported-call",
-                "resolved",
-                `call ${call.name}`,
-              ),
-            );
-          } else {
-            addEdge(
-              sourceId,
-              targetId,
-              "imports",
-              0.9,
-              evidenceMetadata(
-                undefined,
-                entry.range,
-                parsed.parserId,
-                "import.resolve",
-                "exact",
-                `import from "${entry.specifier}"`,
-              ),
-            );
-          }
-          continue;
-        }
-
-        addEdge(
-          sourceId,
-          targetId,
-          "imports",
-          1,
-          evidenceMetadata(
-            undefined,
-            entry.range,
-            parsed.parserId,
-            "import.resolve",
-            "exact",
-            `import from "${entry.specifier}"`,
-          ),
-        );
-        continue;
-      }
-
-      // External package: known integrations become explicit nodes.
-      const integration = findIntegrationForSpecifier(entry.specifier);
-      if (integration) {
-        const targetIdMatches = integrationNodeId({
-          definition: integration.definition,
-          packageName: integration.packageName,
-          files: [],
-          confidence: 1,
-        });
-        if (nodes.has(targetIdMatches)) {
-          const aggregate = aggregateOperations(usage.calls);
-          const kind = integration.definition.kind;
-          if (kind === "database") {
-            if (aggregate.hasRead && aggregate.readCall) {
-              addEdge(
-                sourceId,
-                targetIdMatches,
-                "reads",
-                0.8,
-                evidenceMetadata(
-                  { count: aggregate.count },
-                  aggregate.readCall.range,
-                  parsed.parserId,
-                  "integration.db-call",
-                  "inferred",
-                  `${integration.packageName}: ${aggregate.readCall.name} classified as a read`,
-                ),
-              );
-            }
-            if (aggregate.hasWrite && aggregate.writeCall) {
-              addEdge(
-                sourceId,
-                targetIdMatches,
-                "writes",
-                0.82,
-                evidenceMetadata(
-                  { count: aggregate.count },
-                  aggregate.writeCall.range,
-                  parsed.parserId,
-                  "integration.db-call",
-                  "inferred",
-                  `${integration.packageName}: ${aggregate.writeCall.name} classified as a write`,
-                ),
-              );
-            }
-            if (!aggregate.hasRead && !aggregate.hasWrite) {
-              addEdge(
-                sourceId,
-                targetIdMatches,
-                "uses",
-                0.75,
-                evidenceMetadata(
-                  { label: integration.definition.label },
-                  entry.range,
-                  parsed.parserId,
-                  "integration.package-import",
-                  "exact",
-                  `package "${integration.packageName}" imported`,
-                ),
-              );
-            }
-          } else {
-            addEdge(
-              sourceId,
-              targetIdMatches,
-              "uses",
-              kind === "orm" ? 0.9 : 0.95,
-              evidenceMetadata(
-                { label: integration.definition.label },
-                entry.range,
-                parsed.parserId,
-                "integration.package-import",
-                "exact",
-                `package "${integration.packageName}" imported`,
-              ),
-            );
-          }
-        }
-      }
-    }
-
-    // Environment variable usage
-    const envVars = envVarsByFile.get(fromPath);
-    if (envVars && nodes.has(CONFIG_NODE_ID)) {
-      const reads = (parsed.envReads ?? []).slice(0, MAX_EVIDENCE_PER_EDGE);
-      const metadata: AppGraphEdgeMetadata = { envVars: envVars.slice(0, 12) };
-      if (reads.length > 0) {
-        metadata.evidence = reads.map((read) => ({
-          path: read.range.path,
-          startLine: read.range.startLine,
-          endLine: read.range.endLine,
-          symbol: read.name,
-          analyzerId: parsed.parserId,
-          ruleId: "env.process-read",
-          kind: "exact" as const,
-          reason: `process.env.${read.name}`,
-        }));
-      }
-      addEdge(sourceId, CONFIG_NODE_ID, "uses", 0.9, metadata);
-    }
-  }
-
-  // Symbol edges: file -> symbol ownership and symbol -> symbol calls/renders.
-  for (const key of allowedSymbolKeys) {
-    const { path, name } = splitSymbolKey(key);
-    const file = context.parsed.get(path);
-    const symbol = file?.symbols.find((candidate) => candidate.name === name);
-    addEdge(
-      fileNodeId(path),
-      symbolNodeId(path, name),
-      "contains",
-      1,
-      evidenceMetadata(
-        undefined,
-        symbol?.range ?? { path, startLine: 1 },
-        file?.parserId ?? "typescript-ast",
-        "ir.symbol-declaration",
-        "exact",
-        `symbol ${name} declared in ${path}`,
-      ),
-    );
-  }
-
-  for (const fact of symbolFacts) {
-    addEdge(
-      symbolNodeId(fact.sourcePath, fact.sourceSymbol),
-      symbolNodeId(fact.target.path, fact.target.name),
-      fact.type,
-      fact.confidence,
-      evidenceMetadata(
-        { via: fact.target.name },
-        fact.range,
-        context.parsed.get(fact.sourcePath)?.parserId ?? "typescript-ast",
-        fact.ruleId,
-        fact.evidenceKind,
-        fact.reason,
-      ),
-    );
-  }
-
-  // Data edges: provider -> models, model -> model relations, code -> model access.
-  const providerDatabase = databaseNodes[0];
-  const formatRuleId: Record<string, string> = {
-    prisma: "data.model-declaration",
-    drizzle: "drizzle.table-declaration",
-    sql: "sql.create-table",
-  };
-
-  for (const { detection, model } of dataModelNodes.values()) {
-    const modelId = dataModelId(detection.format, model.name);
-    if (providerDatabase) {
-      addEdge(
-        providerDatabase.id,
-        modelId,
-        "contains",
-        0.95,
-        evidenceMetadata(
-          undefined,
-          model.range,
-          detection.analyzerId,
-          formatRuleId[detection.format] ?? "data.model-declaration",
-          "exact",
-          `${model.name} declared in ${model.range.path}`,
-        ),
-      );
-    }
-
-    for (const field of model.fields) {
-      if (field.kind === "relation" && field.relation) {
-        const target = detection.models.find(
-          (candidate) => candidate.name.toLowerCase() === field.relation!.target.toLowerCase(),
-        );
-        if (target) {
-          addEdge(
-            modelId,
-            dataModelId(detection.format, target.name),
-            "references",
-            0.95,
-            evidenceMetadata(
-              {
-                cardinality: field.relation.cardinality,
-                field: field.name,
-                optional: field.relation.optional,
-                ownerField: field.relation.ownerField,
-              },
-              field.range,
-              detection.analyzerId,
-              "data.relation-field",
-              "exact",
-              `${model.name}.${field.name} -> ${target.name} (${field.relation.cardinality})`,
-            ),
-          );
-        }
-      } else if (field.kind === "enum") {
-        const enumName = field.type.replace(/[?[\]]/g, "");
-        const enumNodeId = dataEnumId(detection.format, enumName);
-        if (nodes.has(enumNodeId)) {
-          addEdge(
-            modelId,
-            enumNodeId,
-            "references",
-            0.9,
-            evidenceMetadata(
-              { field: field.name, kind: "enum" },
-              field.range,
-              detection.analyzerId,
-              "data.enum-reference",
-              "exact",
-              `${model.name}.${field.name}: ${enumName}`,
-            ),
-          );
-        }
-      }
-    }
-  }
-
-  // Code -> data model usage: Prisma model calls and Drizzle `.from(table)`.
-  // Only model/method names that match parsed schema facts produce edges.
-  for (const [fromPath, file] of context.parsed) {
-    const sourceId = fileNodeId(fromPath);
-    if (!nodes.has(sourceId)) continue;
-    for (const call of file.calls) {
-      const prismaMatch = call.name.match(/^(?:prisma|db|tx)\.([A-Za-z_]\w*)\.([A-Za-z_]\w*)$/);
-      if (prismaMatch) {
-        const modelKey = prismaMatch[1].toLowerCase();
-        const entry = [...dataModelNodes.values()].find(
-          ({ detection, model }) =>
-            detection.format === "prisma" && model.name.toLowerCase() === modelKey,
-        );
-        if (entry) {
-          const operation = classifyDatabaseOperation(prismaMatch[2]);
-          if (operation === "read" || operation === "write") {
-            addEdge(
-              sourceId,
-              dataModelId("prisma", entry.model.name),
-              operation === "read" ? "reads" : "writes",
-              0.85,
-              evidenceMetadata(
-                { via: call.name },
-                call.range,
-                file.parserId,
-                "prisma.model-access",
-                "resolved",
-                `call ${call.name} targets model ${entry.model.name}`,
-              ),
-            );
-          }
-        }
-        continue;
-      }
-
-      if (call.name.endsWith(".from") && call.argumentIdentifiers?.length) {
-        for (const identifier of call.argumentIdentifiers) {
-          const entry = [...dataModelNodes.values()].find(
-            ({ detection, model }) =>
-              detection.format === "drizzle" &&
-              (model.mappedName ?? model.name).toLowerCase() === identifier.toLowerCase(),
-          );
-          if (entry) {
-            addEdge(
-              sourceId,
-              dataModelId("drizzle", entry.model.name),
-              "reads",
-              0.8,
-              evidenceMetadata(
-                { via: call.name },
-                call.range,
-                file.parserId,
-                "drizzle.table-read",
-                "resolved",
-                `${call.name}(${identifier}) matches table ${entry.model.name}`,
-              ),
-            );
-          }
-        }
-      }
-    }
-  }
-
-  // ORM -> database edges. The link is only drawn when a schema analyzer
-  // actually detected a provider; otherwise it stays a low-confidence inference.
-  for (const orm of ormNodes) {
-    for (const database of databaseNodes) {
-      const detection = context.dataSchemas.find((candidate) => candidate.provider);
-      const range = detection?.provider?.range;
-      addEdge(
-        orm.id,
-        database.id,
-        "uses",
-        detection?.provider ? 0.9 : 0.6,
-        evidenceMetadata(
-          { label: orm.label },
-          range,
-          detection?.analyzerId ?? "orm-mapping",
-          detection?.provider ? "prisma.datasource-provider" : "orm.default-database",
-          detection?.provider ? "exact" : "inferred",
-          detection?.provider
-            ? `provider "${detection.provider.raw}" declared in ${detection.provider.range.path}`
-            : "no schema provider found; database inferred from ORM usage",
-        ),
-      );
-    }
-  }
+  // --- Edges: one accumulator shared by all projections ---
+  const accumulator = createEdgeAccumulator((id) => nodes.has(id));
+  addImportGraphEdges(accumulator, context, {
+    configNodeId: nodes.has(CONFIG_NODE_ID) ? CONFIG_NODE_ID : null,
+    envVarsByFile,
+  });
+  addSymbolEdges(accumulator, context, symbolProjection);
+  addDataEdges(accumulator, context, dataProjection, databaseNodes[0]?.id);
+  addOrmDatabaseEdges(accumulator, context, ormNodes, databaseNodes);
 
   // Framework analyzers contribute framework-specific edges (e.g. Next.js routes).
   const nodeIdByRoute = new Map<string, string[]>();
@@ -1265,7 +457,7 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
     try {
       const analysis = await analyzer.analyze(analysisContext);
       for (const edge of analysis.extraEdges) {
-        addEdge(edge.source, edge.target, edge.type, edge.confidence, edge.metadata);
+        accumulator.addEdge(edge.source, edge.target, edge.type, edge.confidence, edge.metadata);
       }
       for (const [nodeId, metadata] of analysis.nodeMetadata) {
         const node = nodes.get(nodeId);
@@ -1302,7 +494,7 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
   }
 
   const allowedNodes = new Set(nodeList.map((node) => node.id));
-  let edgeList = [...edgeMap.values()].filter(
+  let edgeList = accumulator.edges().filter(
     (edge) => allowedNodes.has(edge.source) && allowedNodes.has(edge.target),
   );
 
@@ -1317,7 +509,6 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
     });
   }
 
-  // Clean dangling references to removed edges from node metadata view.
   const external = nodeList.filter((node) => node.type === "external");
   const database = nodeList.filter((node) => node.type === "database");
 
@@ -1334,58 +525,10 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
       services: nodeList.filter((node) => node.type === "service").length,
       components: nodeList.filter((node) => node.type === "component").length,
       databaseNodes: database.length,
-      symbols: allowedSymbolKeys.size,
-      symbolEdges: symbolFacts.length,
+      symbols: symbolProjection.allowedKeys.size,
+      symbolEdges: symbolProjection.facts.length,
     },
   };
-}
-
-function rankOrder(granularity: GraphGranularity): number {
-  return GRANULARITY_ORDER[granularity];
-}
-
-function mergeEdgeMetadata(
-  current: AppGraphEdgeMetadata | undefined,
-  next: AppGraphEdgeMetadata,
-): AppGraphEdgeMetadata {
-  const merged: AppGraphEdgeMetadata = { ...current, ...next };
-  const envVars = [...new Set([...(current?.envVars ?? []), ...(next.envVars ?? [])])].slice(0, 12);
-  if (envVars.length > 0) merged.envVars = envVars;
-
-  const evidence = [...(current?.evidence ?? []), ...(next.evidence ?? [])];
-  if (evidence.length > 0) {
-    const seen = new Set<string>();
-    merged.evidence = evidence
-      .filter((entry) => {
-        const key = `${entry.path}:${entry.startLine ?? 0}:${entry.ruleId}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .slice(0, MAX_EVIDENCE_PER_EDGE);
-  }
-  return merged;
-}
-
-function stripUndefined<T extends Record<string, unknown>>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
-}
-
-function definitionUrl(id: string): string | undefined {
-  const map: Record<string, string> = {
-    stripe: "https://stripe.com",
-    supabase: "https://supabase.com",
-    firebase: "https://firebase.google.com",
-    clerk: "https://clerk.com",
-    openai: "https://openai.com",
-    anthropic: "https://anthropic.com",
-    resend: "https://resend.com",
-    posthog: "https://posthog.com",
-    sentry: "https://sentry.io",
-    prisma: "https://www.prisma.io",
-    drizzle: "https://orm.drizzle.team",
-  };
-  return map[id];
 }
 
 export function routeMatches(candidate: string, template: string): boolean {

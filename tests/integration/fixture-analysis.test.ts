@@ -352,6 +352,28 @@ describe("fixture repository analysis", () => {
     expect(writes.confidence).toBeGreaterThanOrEqual(0.85);
   });
 
+  it("points evidence at the exact source line", async () => {
+    const pageSource = await fs.readFile(
+      path.join(fixtureRoot("sample-nextjs"), "src", "app", "dashboard", "page.tsx"),
+      "utf8",
+    );
+    const jsxLine = pageSource.split("\n").findIndex((line) => line.includes("<ProjectList")) + 1;
+    const dashboard = nodeByPath("src/app/dashboard/page.tsx")!;
+    const projectList = nodeByPath("src/components/ProjectList.tsx")!;
+    const renders = edge(dashboard.id, projectList.id, "renders")!;
+    expect(jsxLine).toBeGreaterThan(0);
+    expect(renders.metadata?.evidence?.[0]?.startLine).toBe(jsxLine);
+
+    const serviceSource = await fs.readFile(
+      path.join(fixtureRoot("sample-nextjs"), "src", "services", "project-service.ts"),
+      "utf8",
+    );
+    const findManyLine = serviceSource.split("\n").findIndex((line) => line.includes("findMany")) + 1;
+    const reads = edge("file:src/services/project-service.ts", "file:src/lib/db.ts", "reads")!;
+    expect(findManyLine).toBeGreaterThan(0);
+    expect(reads.metadata?.evidence?.[0]?.startLine).toBe(findManyLine);
+  });
+
   function apiNode() {
     return document.nodes.find((node) => node.type === "api");
   }
