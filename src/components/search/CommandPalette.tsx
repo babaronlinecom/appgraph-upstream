@@ -131,6 +131,17 @@ export function CommandPalette() {
         },
       },
       {
+        id: "cmd:packages",
+        kind: "command",
+        title: "Open packages view",
+        subtitle: "Workspace packages and their dependencies",
+        icon: <Layers size={13} />,
+        run: () => {
+          setExplorerTab("packages");
+          dispatch({ type: "ui/explorer", open: true });
+        },
+      },
+      {
         id: "cmd:mermaid",
         kind: "command",
         title: "Copy Mermaid diagram",

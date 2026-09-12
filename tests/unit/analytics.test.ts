@@ -103,6 +103,8 @@ const graph: AppGraphDocument = {
     symbolResolution: "partial",
     parsers: ["typescript-ast"],
     integrations: 0,
+    monorepoTool: null,
+    monorepoPackages: 0,
   },
   generatedAt: new Date(0).toISOString(),
 };

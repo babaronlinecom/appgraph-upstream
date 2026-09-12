@@ -12,6 +12,7 @@ export const GROUP_COLORS: Record<GraphGroupId, string> = {
   backend: "#e0b05c",
   data: "#e08bb0",
   config: "#9aa6b8",
+  packages: "#c2a86b",
   external: "#e29a5c",
 };
 

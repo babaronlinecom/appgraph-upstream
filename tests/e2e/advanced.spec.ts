@@ -84,6 +84,13 @@ test.describe("advanced exploration", () => {
     await page.getByRole("button", { name: "nodes", exact: true }).click();
   });
 
+  test("packages view states honestly when there is no monorepo", async ({ page }) => {
+    await page.goto("/github/fixture/sample-nextjs");
+    await expect(page.locator(".react-flow__node").first()).toBeVisible({ timeout: 90_000 });
+    await page.getByRole("button", { name: "Pkgs", exact: true }).click();
+    await expect(page.getByText("No workspace packages detected")).toBeVisible();
+  });
+
   test("hover card, legend and context menu", async ({ page }) => {
     await page.goto("/github/fixture/sample-nextjs");
     const dashboard = page.locator(".react-flow__node", { hasText: "Dashboard" }).first();

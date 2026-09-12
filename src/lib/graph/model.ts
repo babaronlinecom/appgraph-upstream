@@ -19,6 +19,7 @@ export type GraphNodeType =
   | "symbol"
   | "data_model"
   | "data_enum"
+  | "package"
   | "group";
 
 export type GraphEdgeType =
@@ -52,7 +53,7 @@ export const GRANULARITY_LABELS: Record<GraphGranularity, string> = {
   symbols: "Symbols",
 };
 
-export type GraphGroupId = "frontend" | "backend" | "data" | "config" | "external";
+export type GraphGroupId = "frontend" | "backend" | "data" | "config" | "packages" | "external";
 
 export interface GraphGroupDefinition {
   id: GraphGroupId;
@@ -67,7 +68,8 @@ export const GRAPH_GROUPS: GraphGroupDefinition[] = [
   { id: "backend", title: "Backend", description: "API routes, services, middleware", order: 1 },
   { id: "data", title: "Data", description: "Databases, schemas", order: 2 },
   { id: "config", title: "Configuration", description: "Environment and runtime config", order: 3 },
-  { id: "external", title: "External Services", description: "Third-party SDKs and APIs", order: 4 },
+  { id: "packages", title: "Packages", description: "Workspace packages and apps", order: 4 },
+  { id: "external", title: "External Services", description: "Third-party SDKs and APIs", order: 5 },
 ];
 
 export interface AppGraphSourceRef {
@@ -227,6 +229,10 @@ export interface GraphCapabilities {
   symbolResolution: "full" | "partial" | "none";
   parsers: string[];
   integrations: number;
+  /** Monorepo tooling detected from config files (null for single-package repos). */
+  monorepoTool: string | null;
+  /** Number of workspace packages discovered; 0 or 1 means not a monorepo. */
+  monorepoPackages: number;
 }
 
 export interface AppGraphDocument {

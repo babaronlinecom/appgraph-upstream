@@ -776,6 +776,7 @@ function GraphCanvasInner() {
         onPaneClick={handlePaneClick}
         onMoveStart={() => setContextMenu(null)}
         proOptions={{ hideAttribution: true }}
+        onlyRenderVisibleElements={elements.nodes.length > 350}
         minZoom={0.06}
         maxZoom={2.2}
         nodesConnectable={false}

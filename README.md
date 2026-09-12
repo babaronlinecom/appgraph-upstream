@@ -93,6 +93,22 @@ no LLM, no code execution, no `npm install` of the analyzed repository.
 - Recognized SDKs become explicit nodes: Stripe, Prisma, Drizzle, Supabase, Firebase, Clerk,
   Auth.js, pg, MongoDB, Redis, AWS S3, OpenAI, Anthropic, Resend, PostHog, Sentry and more.
 
+### 🏢 Monorepo intelligence
+- Detects **npm / yarn / pnpm workspaces, Turborepo and Nx** from real config files.
+- Per-package framework detection with a **Packages** workspace view and its own canvas lane.
+- Dependency edges only for workspace packages, each carrying the declaring line in
+  `package.json` as evidence.
+- Cross-package imports resolve through package `exports` maps, including subpaths
+  (`@acme/ui/button`), conditions and wildcards.
+
+### ⚡ Performance
+- Per-file parse cache keyed by content SHA + parser version, so unchanged files are
+  never reparsed across commits.
+- Precomputed graph indexes for hover/selection hot paths and React Flow viewport culling
+  for large graphs.
+- Bounded analysis with explicit warnings; a synthetic 420-file fixture guards budgets
+  and determinism in CI.
+
 ## Screenshots
 
 | Flow tracing | Insights & detected flows |

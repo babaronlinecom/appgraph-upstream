@@ -7,6 +7,7 @@ import {
   Database,
   Globe,
   LayoutTemplate,
+  Package,
   RotateCcw,
   ServerCog,
   Settings2,
@@ -25,6 +26,7 @@ import { EDGE_TYPE_META, NODE_TYPE_META } from "@/components/canvas/node-meta";
 import { InsightsPanel } from "./InsightsPanel";
 import { AnalyticsPanel } from "./AnalyticsPanel";
 import { DataPanel } from "./DataPanel";
+import { PackagesPanel } from "./PackagesPanel";
 import { cn } from "@/lib/utils/cn";
 
 const GROUP_ICONS: Record<GraphGroupId, typeof LayoutTemplate> = {
@@ -32,6 +34,7 @@ const GROUP_ICONS: Record<GraphGroupId, typeof LayoutTemplate> = {
   backend: ServerCog,
   data: Database,
   config: Settings2,
+  packages: Package,
   external: Globe,
 };
 
@@ -100,7 +103,7 @@ export function Explorer() {
       </div>
 
       <div className="flex gap-1 border-b border-line px-2 py-1.5">
-        {(["nodes", "insights", "analytics", "data"] as const).map((item) => (
+        {(["nodes", "insights", "analytics", "data", "packages"] as const).map((item) => (
           <button
             key={item}
             type="button"
@@ -111,7 +114,7 @@ export function Explorer() {
             )}
             aria-pressed={tab === item}
           >
-            {item}
+            {item === "packages" ? "Pkgs" : item}
           </button>
         ))}
       </div>
@@ -122,6 +125,8 @@ export function Explorer() {
         <AnalyticsPanel />
       ) : tab === "data" ? (
         <DataPanel />
+      ) : tab === "packages" ? (
+        <PackagesPanel />
       ) : (
         <>
           <div className="space-y-3 border-b border-line p-3">

@@ -6,6 +6,7 @@ import {
   FileCode2,
   Globe,
   LayoutTemplate,
+  Package,
   ServerCog,
   Settings2,
   ShieldCheck,
@@ -36,6 +37,7 @@ export const NODE_TYPE_META: Record<GraphNodeType, NodeTypeMeta> = {
   symbol: { label: "Symbol", icon: Braces, color: "#6fd3c7" },
   data_model: { label: "Data model", icon: Table2, color: "#e08bb0" },
   data_enum: { label: "Enum", icon: Tags, color: "#c9a0e8" },
+  package: { label: "Package", icon: Package, color: "#c2a86b" },
   group: { label: "Group", icon: Box, color: "#8f98a3" },
 };
 

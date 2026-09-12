@@ -1386,7 +1386,16 @@ Never expose secret values.
 
 ## AG-MONO-001 — Workspace/package graph
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 4)
+
+`src/lib/analysis/monorepo/workspace.ts` discovers workspace packages from
+`package.json` `workspaces` (array and object form), `pnpm-workspace.yaml`
+(including `!negation`), Turborepo (`turbo.json`) and Nx (`nx.json`) with
+tool + evidence paths. `builders/package-graph.ts` creates `package` nodes
+(new Packages lane) and `depends_on` edges only for dependencies that resolve
+to workspace packages, with the declaring line in package.json as evidence.
+Fixture: `tests/fixtures/sample-monorepo` (apps/web, apps/api, packages/ui,
+packages/db).
 
 Support:
 - npm workspaces;
@@ -1401,7 +1410,12 @@ Create package nodes and package dependency edges.
 
 ## AG-MONO-002 — Per-package framework detection
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 4)
+
+Each workspace package runs its own detection over its manifest and the files
+under its root: frameworks (Next.js/React/Node.js), role (app/library/worker)
+and analyzed file counts are stored on the package node metadata; the
+Packages UI shows them per package.
 
 Do not assume one repository = one framework.
 
@@ -1421,7 +1435,15 @@ Each package gets its own detected capabilities.
 
 ## AG-MONO-003 — Cross-package symbol/import resolution
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 4)
+
+`ImportResolver` resolves workspace package names through the package
+`exports` map (root, subpaths, condition objects, wildcard patterns) with
+`main/module/types` and conventional `src/` fallbacks. tsconfig project
+references are handled via tsconfig `paths`; workspace package names are the
+primary cross-package mechanism. Integration tests cover `@acme/ui/button`
+(exports subpath → JSX render edge) and `@acme/db` (root export → import edge)
+plus the cross-package symbol edge `HomePage renders Button`.
 
 Resolve:
 - workspace package names;
@@ -1433,7 +1455,14 @@ Resolve:
 
 ## AG-MONO-004 — Monorepo overview UX
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 4)
+
+New **Packages** explorer tab: workspace tool badge (turbo/pnpm/npm/nx),
+package cards with role and framework chips, per-package file/link counts,
+dependency and dependent chips that navigate between packages, per-package
+"show on canvas" and impact actions. Package nodes live in their own canvas
+lane with real `depends_on` edges; a single-package repository shows an honest
+empty state.
 
 Add top-level `Packages` view:
 - apps;
@@ -1990,7 +2019,12 @@ Check:
 
 ## AG-PERF-001 — Incremental analysis cache
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 4)
+
+Per-file parse cache keyed by `parserId:parserVersion:language:sha1(content)`
+in the `parse-files` cache namespace; unchanged files are never reparsed across
+commits or analysis versions. Verified by the perf fixture test (second run
+reuses the cache and produces identical node/edge id sets).
 
 Current cache is commit-level. Add per-file parse cache keyed by:
 - content SHA;
@@ -2024,7 +2058,12 @@ For CPU-heavy parsing:
 
 ## AG-PERF-004 — Client graph virtualization
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 4)
+
+React Flow `onlyRenderVisibleElements` is enabled automatically above 350
+rendered elements, on top of granularity projection, collapsed groups, edge
+aggregation caps and the symbol cap. Full viewport-culling metrics remain a
+future performance-tracking item.
 
 Avoid rendering all low-level graph nodes at once.
 
@@ -2039,7 +2078,13 @@ Use:
 
 ## AG-PERF-005 — Graph indexes
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 4)
+
+`src/lib/graph/indexes.ts` precomputes `nodeById`, `nodesByPath`,
+`outgoingByNode`, `incomingByNode`, `nodesByType`, `nodesByGroup`,
+`edgesByType` and `connectionCounts`, memoized per document (WeakMap).
+`neighborsOf` and `connectionCounts` in the workspace selectors use the
+indexes, so hover/selection no longer rescan every edge.
 
 Precompute:
 - nodeById;
@@ -2056,7 +2101,13 @@ Do not repeatedly scan all edges during common interactions on large graphs.
 
 ## AG-PERF-006 — Performance fixture suite
 **Priority:** P1  
-**Status:** TODO
+**Status:** DONE (Batch 4)
+
+`tests/integration/perf-bounds.test.ts` generates a synthetic 420-file
+TypeScript repository and asserts: analyzed-file budget, node/edge caps,
+source-budget warning instead of silent truncation, all five layouts present,
+determinism across runs and parse-cache reuse. A 1k/5k/20k scaling matrix with
+recorded timings remains future work.
 
 Maintain synthetic/realistic fixtures:
 - 1k files;

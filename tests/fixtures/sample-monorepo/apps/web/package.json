@@ -1,0 +1,10 @@
+{
+  "name": "web",
+  "private": true,
+  "dependencies": {
+    "next": "15.1.0",
+    "react": "19.0.0",
+    "@acme/ui": "workspace:*",
+    "@acme/db": "workspace:*"
+  }
+}

@@ -16,6 +16,9 @@ const LEGEND_NODE_TYPES: GraphNodeType[] = [
   "config",
   "module",
   "symbol",
+  "data_model",
+  "data_enum",
+  "package",
 ];
 
 const LEGEND_EDGE_TYPES: GraphEdgeType[] = [

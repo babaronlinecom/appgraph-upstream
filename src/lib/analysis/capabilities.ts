@@ -1,5 +1,6 @@
 import type { GraphCapabilities } from "@/lib/graph/model";
 import type { DataSchemaDetection } from "./data/registry";
+import type { WorkspaceInfo } from "./monorepo/workspace";
 import { analyzerRegistries } from "./registries";
 import type { RepositorySignals } from "./types";
 
@@ -14,6 +15,7 @@ export function buildCapabilities(input: {
   signals: RepositorySignals;
   dataSchemas: DataSchemaDetection[];
   hasHttpSurface: boolean;
+  workspace: WorkspaceInfo;
 }): GraphCapabilities {
   const formats = [...new Set(input.dataSchemas.map((detection) => detection.format))].sort();
   const dataSchemaAnalyzers = analyzerRegistries.dataSchemas
@@ -32,5 +34,7 @@ export function buildCapabilities(input: {
     symbolResolution: "partial",
     parsers: [...input.parserIds].sort(),
     integrations: analyzerRegistries.integrations.size,
+    monorepoTool: input.workspace.isMonorepo ? input.workspace.tool : null,
+    monorepoPackages: input.workspace.isMonorepo ? input.workspace.packages.length : 0,
   };
 }

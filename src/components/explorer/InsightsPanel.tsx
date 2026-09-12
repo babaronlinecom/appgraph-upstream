@@ -185,6 +185,15 @@ export function InsightsPanel() {
               }
             />
             <CoverageRow
+              label="Monorepo"
+              value={
+                capabilities.monorepoPackages > 0
+                  ? `${capabilities.monorepoTool ?? "workspaces"} · ${capabilities.monorepoPackages} package(s)`
+                  : "single package"
+              }
+              muted={capabilities.monorepoPackages === 0}
+            />
+            <CoverageRow
               label="Registered"
               value={`${capabilities.parsers.length} parser(s) · ${capabilities.dataSchemaAnalyzers.length} schema analyzer(s) · ${capabilities.integrations} integrations`}
               muted

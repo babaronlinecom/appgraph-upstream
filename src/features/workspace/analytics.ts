@@ -205,6 +205,7 @@ const MERMAID_NODE_COLORS: Record<GraphNodeType, string> = {
   symbol: "#6fd3c7",
   data_model: "#e08bb0",
   data_enum: "#c9a0e8",
+  package: "#c2a86b",
   group: "#8f98a3",
 };
 

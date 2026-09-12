@@ -43,16 +43,20 @@ export function collectMetadataCandidates(paths: string[]): string[] {
       candidates.push(path);
       continue;
     }
-    if (/^(apps|packages)\/[^/]+\/package\.json$/i.test(path)) {
-      candidates.push(path);
-      continue;
+    // Workspace manifests at shallow depth (monorepo support).
+    if (/(^|\/)package\.json$/.test(path)) {
+      const segments = path.split("/");
+      if (segments.length <= 4 && !segments.slice(0, -1).some((segment) => isIgnoredDirectory(segment))) {
+        candidates.push(path);
+        continue;
+      }
     }
     // SQL schema/migration files feed the deterministic DDL analyzer.
     if (/\.sql$/i.test(path) && !/\.generated\.sql$/i.test(path)) {
       candidates.push(path);
     }
   }
-  return [...new Set(candidates)].slice(0, 40);
+  return [...new Set(candidates)].slice(0, 80);
 }
 
 export function priorityScore(path: string, signals: RepositorySignals): number {

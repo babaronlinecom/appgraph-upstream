@@ -17,6 +17,7 @@ import {
   projectIntegrations,
 } from "./builders/integration-graph";
 import { addSymbolEdges, projectSymbols } from "./builders/symbol-graph";
+import { addPackageEdges, projectPackages } from "./builders/package-graph";
 import { fileNodeId, FILE_NODE_PREFIX } from "./builders/ids";
 import type {
   AnalysisWarningDraft,
@@ -346,6 +347,14 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
     warnings.push({ code: "SCHEMA_PARTIAL_REPLAY", severity: "info", message: note });
   }
 
+  // --- Monorepo package projection (Batch 4) ---
+  const packageProjection = projectPackages(context);
+  for (const node of packageProjection.nodes) {
+    if (nodes.has(node.id)) continue;
+    nodes.set(node.id, node);
+    nodeRank.set(node.id, rankOrder(node.granularity));
+  }
+
   // --- Environment configuration node ---
   const envVarsByFile = new Map<string, string[]>();
   const allEnvVars = new Set<string>(context.envExampleVars ?? []);
@@ -432,6 +441,7 @@ export async function buildGraph(context: RepositoryContext): Promise<GraphBuild
   addSymbolEdges(accumulator, context, symbolProjection);
   addDataEdges(accumulator, context, dataProjection, databaseNodes[0]?.id);
   addOrmDatabaseEdges(accumulator, context, ormNodes, databaseNodes);
+  addPackageEdges(accumulator, packageProjection);
 
   // Framework analyzers contribute framework-specific edges (e.g. Next.js routes).
   const nodeIdByRoute = new Map<string, string[]>();

@@ -1,5 +1,6 @@
 import type { GraphGroupId, RepositoryMetadata, RepositoryTree } from "@/lib/graph/model";
 import type { FileIR, IrExport, IrImport, IrSourceRange } from "./ir/model";
+import type { WorkspaceInfo } from "./monorepo/workspace";
 
 export type FileCategory =
   | "page"
@@ -103,6 +104,8 @@ export interface RepositoryContext {
   integrations: DetectedIntegration[];
   /** Deterministic data-schema detections (Prisma/Drizzle/SQL adapters). */
   dataSchemas: import("./data/registry").DataSchemaDetection[];
+  /** Monorepo workspace discovery (npm/pnpm/yarn/turbo/nx). */
+  workspace: WorkspaceInfo;
   envVars: Map<string, string[]>;
   envExampleVars: string[];
   warnings: AnalysisWarningDraft[];

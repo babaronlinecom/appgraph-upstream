@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readCache, writeCache } from "@/lib/cache/cache";
 import type { RepositoryProvider } from "@/lib/github/provider";
 import { AppGraphError, isAbortError } from "@/lib/github/errors";
@@ -15,6 +16,7 @@ import { detectRepositorySignals, parsePackageJson } from "./frameworks/registry
 import { buildGraph } from "./graph-builder";
 import { findIntegrationForSpecifier } from "./integrations";
 import { detectLanguage } from "./languages";
+import { detectWorkspaces } from "./monorepo/workspace";
 import { parserRegistry } from "./parsers/registry";
 import { analyzerRegistries } from "./registries";
 import { ImportResolver, parseTsConfigAliases, type PathAliasConfig } from "./resolvers/import-resolver";
@@ -94,7 +96,7 @@ function createStepTracker(onProgress?: (steps: AnalysisStep[]) => void) {
 }
 
 function analysisVersion(): string {
-  return process.env.APPGRAPH_ANALYSIS_VERSION?.trim() || "0.5.0";
+  return process.env.APPGRAPH_ANALYSIS_VERSION?.trim() || "0.6.0";
 }
 
 export function graphCacheKey(ownerRepo: string, commitSha: string): string {
@@ -110,23 +112,6 @@ function parseDotEnvKeys(content: string): string[] {
     if (match) keys.push(match[1]);
   }
   return keys;
-}
-
-function workspaceAliases(files: Map<string, string>): Map<string, string> {
-  const packages = new Map<string, string>();
-  for (const [path, content] of files) {
-    const match = path.match(/^(packages|apps)\/([^/]+)\/package\.json$/);
-    if (!match) continue;
-    try {
-      const parsed = JSON.parse(content) as { name?: string };
-      if (parsed.name) {
-        packages.set(parsed.name, `${match[1]}/${match[2]}`);
-      }
-    } catch {
-      // ignore malformed workspace package.json
-    }
-  }
-  return packages;
 }
 
 function combineSignals(signal: AbortSignal | undefined, timeoutSignal: AbortSignal): AbortSignal {
@@ -255,6 +240,10 @@ export async function analyzeRepository(options: AnalyzeOptions): Promise<AppGra
       paths: allPaths.map((entry) => entry.path),
       packageJson,
     });
+    const workspace = detectWorkspaces({
+      files: fetched,
+      paths: allPaths.map((entry) => entry.path),
+    });
 
     // --- Source selection ---
     tracker.start("select");
@@ -350,11 +339,23 @@ export async function analyzeRepository(options: AnalyzeOptions): Promise<AppGra
         continue;
       }
       const extension = `.${path.split(".").pop()?.toLowerCase() ?? ""}`;
+      // Per-file parse cache (AG-PERF-001): keyed by content SHA + parser
+      // version, so unchanged files are never reparsed across commits.
+      const contentHash = createHash("sha1").update(content).digest("hex");
+      const parseCacheKey = `${parser.id}:${parser.version}:${language}:${contentHash}`;
+      const cachedFile = await readCache<ParsedFile>("parse-files", parseCacheKey);
+      if (cachedFile) {
+        parsed.set(path, cachedFile);
+        parserIds.add(parser.id);
+        parsedLanguages.add(language);
+        continue;
+      }
       try {
         const result = parser.parse({ path, content, language, extension });
         parsed.set(path, result.file);
         parserIds.add(parser.id);
         parsedLanguages.add(language);
+        void writeCache("parse-files", parseCacheKey, result.file);
         for (const diagnostic of result.diagnostics) {
           warnings.push({
             code: diagnostic.code,
@@ -397,7 +398,22 @@ export async function analyzeRepository(options: AnalyzeOptions): Promise<AppGra
     if (tsconfigContent) {
       aliases = parseTsConfigAliases(tsconfigContent, fetched.has("jsconfig.json") ? "jsconfig.json" : "tsconfig.json");
     }
-    const resolver = new ImportResolver({ files: fetched, aliases, workspacePackages: workspaceAliases(fetched) });
+    const resolver = new ImportResolver({
+      files: fetched,
+      aliases,
+      workspacePackages: new Map(
+        workspace.packages.map((pkg) => [
+          pkg.name,
+          {
+            root: pkg.root,
+            exports: pkg.exports,
+            main: pkg.main,
+            module: pkg.module,
+            types: pkg.types,
+          },
+        ]),
+      ),
+    });
     const resolvedImports = new Map<string, Map<string, string | null>>();
     for (const [path, file] of parsed) {
       const perFile = new Map<string, string | null>();
@@ -476,6 +492,7 @@ export async function analyzeRepository(options: AnalyzeOptions): Promise<AppGra
       resolvedImports,
       integrations,
       dataSchemas,
+      workspace,
       envVars: new Map(),
       envExampleVars,
       warnings,
@@ -517,6 +534,7 @@ export async function analyzeRepository(options: AnalyzeOptions): Promise<AppGra
         signals,
         dataSchemas,
         hasHttpSurface,
+        workspace,
       }),
       stats: {
         treeEntries: tree.entries.length,

@@ -77,8 +77,27 @@ The authoritative plan is `APPGRAPH_ROADMAP.md` (kept in-repo, statuses updated 
   evidence; unprovable edges are not created.
 - Analysis version bumped to `0.5.0`.
 
-### Batch 4 — next (Monorepos + large-repo performance)
-- AG-MONO-001..004, AG-PERF-001/004/005/006.
+### Batch 4 — Monorepos + performance (DONE)
+- Workspace discovery: npm/yarn `workspaces` (array/object), `pnpm-workspace.yaml`,
+  Turborepo (`turbo.json`), Nx (`nx.json`) with tool evidence; package manifest
+  fetching at shallow depth.
+- Package graph: `package` nodes in a new **Packages** canvas lane, `depends_on`
+  edges only for workspace dependencies (manifest line as evidence), per-package
+  framework/role detection, `contains` edges to analyzed files.
+- Cross-package resolution through package `exports` maps (root, subpaths,
+  conditions, wildcards) with `main/module/types` and `src/` fallbacks; verified
+  end-to-end (`@acme/ui/button` renders, `@acme/db` imports, cross-package symbol).
+- Packages explorer tab: tool badge, cards with role/framework chips, deps and
+  dependents navigation, per-package canvas/impact actions; honest empty state.
+- Performance: per-file parse cache (content SHA + parser version), graph indexes
+  (memoized WeakMap, used by hover/selection), React Flow visible-elements
+  culling above 350 nodes, 420-file bounds/determinism fixture.
+- Fixtures: `sample-monorepo` (+ workspace unit tests, monorepo integration test,
+  packages E2E via a second Playwright server). Analysis version `0.6.0`.
+
+### Batch 5 — next (Multi-language)
+- AG-LANG-001..: Python (FastAPI/Django/Flask), then Go; each with fixture,
+  framework adapter and golden semantic tests.
 
 ## Status
 
@@ -185,8 +204,8 @@ analysis → semantic architecture graph → interactive canvas.
 ## Verification status (last run)
 
 - `npm run typecheck` — clean.
-- `npm test` — 141 tests passed (18 files; data/symbol/IR/evidence hardening,
-  negative regressions; live GitHub tests skipped by default).
+- `npm test` — 160 tests passed (21 files; monorepo, perf bounds, data/symbol/IR
+  hardening, negative regressions; live GitHub tests skipped by default).
 - `npm run build` — succeeded (standalone output only when `NEXT_STANDALONE=1`, i.e. in Docker).
 - `npx playwright test` — 8/8 passed: landing (2), workspace interactions, advanced exploration
   (analytics/exports, hover card/legend/context menu, trace/impact/path/tour), mobile sheets,

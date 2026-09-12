@@ -1,9 +1,15 @@
 import ts from "typescript";
+import { resolvePackageExports, type WorkspacePackage } from "../monorepo/workspace";
 
 export interface PathAliasConfig {
   baseUrl: string | null;
   paths: Record<string, string[]>;
 }
+
+/** Minimal workspace package shape used for cross-package resolution. */
+export type WorkspacePackageMapping =
+  | string
+  | Pick<WorkspacePackage, "root"> & Partial<Pick<WorkspacePackage, "exports" | "main" | "module" | "types">>;
 
 export const EMPTY_ALIAS_CONFIG: PathAliasConfig = { baseUrl: null, paths: {} };
 
@@ -55,7 +61,7 @@ interface ResolverOptions {
   files: Map<string, string>;
   aliases: PathAliasConfig;
   /** Extra direct path mappings, e.g. workspace packages. */
-  workspacePackages?: Map<string, string>;
+  workspacePackages?: Map<string, WorkspacePackageMapping>;
 }
 
 function candidatesForBase(base: string): string[] {
@@ -90,7 +96,7 @@ function candidatesForBase(base: string): string[] {
 export class ImportResolver {
   private readonly files: Map<string, string>;
   private readonly aliases: PathAliasConfig;
-  private readonly workspacePackages: Map<string, string>;
+  private readonly workspacePackages: Map<string, WorkspacePackageMapping>;
 
   constructor(options: ResolverOptions) {
     this.files = options.files;
@@ -133,9 +139,31 @@ export class ImportResolver {
     if (this.workspacePackages.size === 0) return null;
     const segments = specifier.split("/");
     const packageName = specifier.startsWith("@") ? segments.slice(0, 2).join("/") : segments[0];
-    const root = this.workspacePackages.get(packageName);
-    if (!root) return null;
+    const mapping = this.workspacePackages.get(packageName);
+    if (!mapping) return null;
+    const pkg = typeof mapping === "string" ? { root: mapping } : mapping;
+    const root = pkg.root;
     const rest = specifier.slice(packageName.length).replace(/^\//, "");
+
+    // 1. `exports` map (root import or subpath) — the package's public contract.
+    if (pkg.exports && Object.keys(pkg.exports).length > 0) {
+      const exportTarget = resolvePackageExports({ exports: pkg.exports }, rest);
+      if (exportTarget) {
+        const found = this.findExisting(normalizeRepoPath(`${root}/${exportTarget.replace(/^\.\//, "")}`));
+        if (found) return found;
+      }
+    }
+
+    // 2. main/module/types for bare package imports.
+    if (!rest) {
+      for (const candidate of [pkg.main, pkg.module, pkg.types]) {
+        if (!candidate) continue;
+        const found = this.findExisting(normalizeRepoPath(`${root}/${candidate.replace(/^\.\//, "")}`));
+        if (found) return found;
+      }
+    }
+
+    // 3. Conventional fallbacks.
     const bases = [normalizeRepoPath(`${root}/${rest}`), normalizeRepoPath(`${root}/src/${rest}`)];
     if (!rest) {
       bases.push(normalizeRepoPath(`${root}/src/index`), normalizeRepoPath(`${root}/index`));

@@ -8,6 +8,7 @@ import {
   type GraphGroupId,
   type GraphLayout,
 } from "@/lib/graph/model";
+import { getGraphIndexes } from "@/lib/graph/indexes";
 import type { WorkspaceFilters } from "./store";
 
 export const ALL_EDGE_TYPES: GraphEdgeType[] = [
@@ -64,12 +65,7 @@ export function visibleEdges(
 }
 
 export function connectionCounts(graph: AppGraphDocument): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const edge of graph.edges) {
-    counts.set(edge.source, (counts.get(edge.source) ?? 0) + 1);
-    counts.set(edge.target, (counts.get(edge.target) ?? 0) + 1);
-  }
-  return counts;
+  return getGraphIndexes(graph).connectionCounts;
 }
 
 export interface NeighborSet {
@@ -82,16 +78,18 @@ export function neighborsOf(
   nodeId: string,
   direction: "both" | "in" | "out" = "both",
 ): NeighborSet {
+  const indexes = getGraphIndexes(graph);
   const nodes = new Set<string>([nodeId]);
   const edges = new Set<string>();
-  for (const edge of graph.edges) {
-    const sourceMatch = direction !== "in" && edge.source === nodeId;
-    const targetMatch = direction !== "out" && edge.target === nodeId;
-    if (sourceMatch || targetMatch) {
-      edges.add(edge.id);
-      nodes.add(edge.source);
-      nodes.add(edge.target);
-    }
+  const outgoing = direction !== "in" ? indexes.outgoingByNode.get(nodeId) ?? [] : [];
+  const incoming = direction !== "out" ? indexes.incomingByNode.get(nodeId) ?? [] : [];
+  for (const edge of outgoing) {
+    edges.add(edge.id);
+    nodes.add(edge.target);
+  }
+  for (const edge of incoming) {
+    edges.add(edge.id);
+    nodes.add(edge.source);
   }
   return { nodes, edges };
 }
