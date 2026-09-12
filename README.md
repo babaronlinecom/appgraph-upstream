@@ -83,8 +83,9 @@ no LLM, no code execution, no `npm install` of the analyzed repository.
 - **Mermaid ER** export and schema JSON export.
 
 ### 🎨 Premium canvas
-- Railway-inspired dark UI, deterministic ELK lane layout (Frontend → Backend → Data →
-  Configuration → External), smoothstep edges, animated traces, minimap, command palette (`⌘K`),
+- Railway-inspired dark UI, deterministic lane layout (Frontend → Backend → Data →
+  Configuration → External): ELK for small graphs, a fast layered layout for large ones,
+  smoothstep edges, animated traces, minimap, command palette (`⌘K`),
   legend (`L`), right-click context menu, keyboard-first navigation.
 
 ### 🔌 Framework-aware analysis
@@ -188,7 +189,8 @@ Framework adapters (Next.js, React, Node) + integration detection
    ↓
 Semantic graph builder (entities, typed edges, confidence, groups)
    ↓
-ELK layered layout per granularity (lane partitioning)
+Layered layout per granularity: ELK worker with hard timeout (small graphs),
+fast deterministic lane layout (large graphs)
    ↓
 Graph JSON → interactive canvas
 ```

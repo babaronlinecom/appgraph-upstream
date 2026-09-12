@@ -1,4 +1,3 @@
-import ELK from "elkjs/lib/elk.bundled.js";
 import type { ElkNode, LayoutOptions } from "elkjs/lib/elk-api";
 import {
   GRAPH_GROUPS,
@@ -14,6 +13,8 @@ import {
   type LayoutGroup,
   type NodePlacement,
 } from "@/lib/graph/model";
+import { layoutWithWorker } from "./elk-worker";
+import { layeredPositions } from "./layered-layout";
 
 export { NODE_HEIGHT, NODE_WIDTH };
 
@@ -21,7 +22,22 @@ const GROUP_PADDING = { top: 60, left: 32, right: 32, bottom: 32 };
 const GROUP_ORDER = new Map(GRAPH_GROUPS.map((group) => [group.id, group.order]));
 const GROUP_TITLES = new Map(GRAPH_GROUPS.map((group) => [group.id, group.title]));
 
-const elk = new ELK();
+/** Hard ceiling for a single ELK run; the worker is terminated on timeout. */
+const LAYOUT_TIMEOUT_MS = 15_000;
+
+/**
+ * Layout does not need every edge: crossing minimization cost grows with edge
+ * count, and the strongest relationships carry the visual structure. All edges
+ * remain in the graph document; this cap only affects positions.
+ */
+const MAX_LAYOUT_EDGES = 700;
+
+/**
+ * Above these sizes ELK's crossing minimization becomes too slow (10s+ or
+ * worse), so the deterministic fast layered layout is used instead.
+ */
+const FAST_LAYOUT_NODE_THRESHOLD = 140;
+const FAST_LAYOUT_EDGE_THRESHOLD = 450;
 
 const LAYOUT_OPTIONS: LayoutOptions = {
   "elk.algorithm": "layered",
@@ -35,6 +51,9 @@ const LAYOUT_OPTIONS: LayoutOptions = {
   "elk.layered.mergeEdges": "false",
   "elk.padding": "[top=24,left=24,bottom=24,right=24]",
   "elk.separateConnectedComponents": "false",
+  // Lower effort keeps large graphs fast; the fallback worker timeout guards
+  // pathological inputs. Visual quality stays acceptable at typical sizes.
+  "elk.layered.thoroughness": "2",
 };
 
 export function visibleAt(node: AppGraphNode, granularity: GraphGranularity): boolean {
@@ -44,7 +63,9 @@ export function visibleAt(node: AppGraphNode, granularity: GraphGranularity): bo
 /**
  * Computes a deterministic layered layout for every granularity level.
  * Groups become left-to-right partitions (Frontend -> Backend -> Data ->
- * Configuration -> External), so request flow reads naturally.
+ * Configuration -> Packages -> External), so request flow reads naturally.
+ * Each layout runs in an isolated worker with a hard timeout: a dense graph can
+ * never block the server or the analysis timeout again.
  */
 export async function computeLayouts(
   nodes: AppGraphNode[],
@@ -98,8 +119,13 @@ async function layoutSingle(
   });
 
   const seenPairs = new Set<string>();
-  const elkEdges = [];
-  for (const edge of edges) {
+  const elkEdges: ElkNode["edges"] = [];
+  const layoutEdges =
+    edges.length > MAX_LAYOUT_EDGES
+      ? [...edges].sort((a, b) => b.confidence - a.confidence).slice(0, MAX_LAYOUT_EDGES)
+      : edges;
+
+  for (const edge of layoutEdges) {
     // Self-loops (e.g. Prisma self-relations) are rendered by the canvas but
     // must not drive the layered layout.
     if (edge.source === edge.target) continue;
@@ -116,16 +142,37 @@ async function layoutSingle(
     edges: elkEdges,
   };
 
-  let positions: Map<string, { x: number; y: number }> = new Map();
-  try {
-    const result = await Promise.race([
-      elk.layout(graph),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("layout timeout")), 20_000)),
-    ]);
-    for (const child of result.children ?? []) {
-      positions.set(child.id, { x: Math.round(child.x ?? 0), y: Math.round(child.y ?? 0) });
+  // Large graphs use the deterministic fast layered layout; small graphs keep
+  // the higher-quality ELK layout. ELK additionally runs in a worker thread
+  // with a hard timeout so it can never block the server.
+  const layoutStartedAt = Date.now();
+  const useFastLayout =
+    nodes.length > FAST_LAYOUT_NODE_THRESHOLD || layoutEdges.length > FAST_LAYOUT_EDGE_THRESHOLD;
+
+  let positions: Map<string, { x: number; y: number }>;
+  let degraded = false;
+  let algorithm: string;
+
+  if (useFastLayout) {
+    positions = layeredPositions(nodes, layoutEdges);
+    algorithm = "fast";
+  } else {
+    const outcome = await layoutWithWorker(graph, LAYOUT_TIMEOUT_MS);
+    positions = outcome.positions;
+    degraded = outcome.degraded;
+    algorithm = "elk";
+    if (outcome.error) {
+      console.warn(`[appgraph] layout ${granularity} degraded: ${outcome.error}`);
     }
-  } catch {
+  }
+
+  if (process.env.APPGRAPH_DEBUG_LAYOUT === "1" || degraded) {
+    console.warn(
+      `[appgraph] layout ${granularity}: nodes=${nodes.length} edges=${elkEdges.length} ` +
+        `${Date.now() - layoutStartedAt}ms algorithm=${algorithm} degraded=${degraded}`,
+    );
+  }
+  if (degraded) {
     positions = fallbackPositions(nodes);
   }
 
@@ -196,6 +243,7 @@ async function layoutSingle(
     nodePlacements,
     groups,
     bounds: { width: maxX + 80, height: maxY + 80 },
+    ...(degraded ? { degraded: true } : {}),
   };
 }
 

@@ -95,6 +95,21 @@ The authoritative plan is `APPGRAPH_ROADMAP.md` (kept in-repo, statuses updated 
 - Fixtures: `sample-monorepo` (+ workspace unit tests, monorepo integration test,
   packages E2E via a second Playwright server). Analysis version `0.6.0`.
 
+### Layout hardening (DONE, AG-PERF-007)
+- Bug: `hi77x/RepoDeck` analysis froze ~204s; bundled `elkjs` is synchronous and
+  blocked the event loop (~219s in layout), defeating the analysis timeout.
+- `src/lib/graph/layout/elk-worker.ts` — ELK runs in a worker thread with a hard
+  15s timeout; timeout terminates the worker and degrades to the fallback grid.
+- `src/lib/graph/layout/layered-layout.ts` — deterministic fast layered layout
+  (lane columns, longest-path depth, barycenter ordering) above 140 nodes or 450
+  layout edges; ELK kept for small graphs. Layout edges capped at 700 by
+  confidence; `thoroughness: 2`.
+- `GraphLayout.degraded` + `LAYOUT_DEGRADED` pipeline warning; `APPGRAPH_DEBUG_LAYOUT=1`
+  prints per-granularity timings.
+- RepoDeck: layout 218.8s → 6.9s (fast path files 8ms, symbols 17ms), analysis
+  ~11s total. New `tests/unit/layout.test.ts`; perf suite asserts no degradation.
+  Analysis version `0.7.0`.
+
 ### Batch 5 — next (Multi-language)
 - AG-LANG-001..: Python (FastAPI/Django/Flask), then Go; each with fixture,
   framework adapter and golden semantic tests.

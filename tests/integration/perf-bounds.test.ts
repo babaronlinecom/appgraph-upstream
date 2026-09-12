@@ -80,6 +80,7 @@ describe("performance bounds and determinism", () => {
   it("produces every layout for the bounded graph", () => {
     for (const granularity of ["product", "architecture", "modules", "files", "symbols"] as const) {
       expect(document.layouts[granularity]).toBeTruthy();
+      expect(document.layouts[granularity]?.degraded).not.toBe(true);
     }
   });
 

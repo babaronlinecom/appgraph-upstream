@@ -184,6 +184,8 @@ export interface GraphLayout {
   nodePlacements: Record<string, NodePlacement>;
   groups: LayoutGroup[];
   bounds: { width: number; height: number };
+  /** True when the layout engine timed out and the fallback grid was used. */
+  degraded?: boolean;
 }
 
 export interface GraphWarning {

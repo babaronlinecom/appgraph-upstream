@@ -96,7 +96,7 @@ function createStepTracker(onProgress?: (steps: AnalysisStep[]) => void) {
 }
 
 function analysisVersion(): string {
-  return process.env.APPGRAPH_ANALYSIS_VERSION?.trim() || "0.6.0";
+  return process.env.APPGRAPH_ANALYSIS_VERSION?.trim() || "0.7.0";
 }
 
 export function graphCacheKey(ownerRepo: string, commitSha: string): string {
@@ -509,6 +509,14 @@ export async function analyzeRepository(options: AnalyzeOptions): Promise<AppGra
     // --- Layout ---
     tracker.start("layout");
     const layouts = await computeLayouts(built.nodes, built.edges);
+    if (Object.values(layouts).some((layout) => layout.degraded)) {
+      warnings.push({
+        code: "LAYOUT_DEGRADED",
+        severity: "warning",
+        message:
+          "The graph is very dense; one or more views use a simplified fallback layout to stay fast.",
+      });
+    }
     tracker.done("layout");
 
     if (options.expectedSha && commitSha && options.expectedSha !== commitSha) {

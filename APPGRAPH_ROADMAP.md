@@ -2126,6 +2126,33 @@ Track:
 
 ---
 
+## AG-PERF-007 — Bounded layout for dense graphs
+**Priority:** P1  
+**Status:** DONE
+
+Reported issue: analyzing `hi77x/RepoDeck` (495 entities, 1646 edges) sat at
+~204s in the UI; the bundled `elkjs` engine is synchronous and blocked the Node
+event loop (~219s inside layout), so neither the analysis timeout nor the job
+watchdog could fire.
+
+Fixes:
+- `src/lib/graph/layout/elk-worker.ts` — ELK runs in a `worker_threads` worker
+  with a hard 15s timeout; the worker is terminated on timeout and the layout
+  degrades to a fallback grid instead of hanging the server.
+- `src/lib/graph/layout/layered-layout.ts` — deterministic O(V+E+V log V)
+  layered layout (lane columns, longest-path depth, predecessor barycenter
+  ordering) used above 140 nodes or 450 layout edges.
+- Layout input caps edges at 700 by confidence, uses
+  `elk.layered.thoroughness: 2`; `GraphLayout.degraded` and the
+  `LAYOUT_DEGRADED` pipeline warning surface any fallback.
+
+Result: RepoDeck layout 218.8s → 6.9s total (fast path: files 8ms, symbols
+17ms); analysis finishes in ~11s. Covered by `tests/unit/layout.test.ts`
+(determinism, lane disjointness, cycle safety, worker timeout) and
+`perf-bounds` now also asserts no layout is degraded. Analysis version `0.7.0`.
+
+---
+
 # 18. P1 — Analysis correctness and trust
 
 ## AG-TRUST-001 — Evidence for every inferred edge
