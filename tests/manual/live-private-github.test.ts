@@ -15,7 +15,7 @@ describe.skipIf(!live)("live private GitHub ingestion", () => {
     const document = await analyzeRepository({ provider, input });
 
     expect(document.nodes.length).toBeGreaterThan(0);
-    expect(document.stats.filesAnalyzed).toBeGreaterThan(0);
+    expect(document.stats.analyzedFiles).toBeGreaterThan(0);
     expect(document.repository.fullName.toLowerCase()).toContain(input.toLowerCase());
   }, 180_000);
 });
