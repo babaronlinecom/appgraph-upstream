@@ -80,7 +80,7 @@ export class LocalRepositoryProvider implements RepositoryProvider {
     };
   }
 
-  async getCommitSha(repo: RepositoryIdentity): Promise<string> {
+  async getCommitSha(repo: RepositoryIdentity, _ref?: string, _signal?: AbortSignal): Promise<string> {
     const root = repositoryRoot(repo);
     return (await readGitCommit(root)) ?? hashDirectory(root);
   }
