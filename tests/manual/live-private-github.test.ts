@@ -6,6 +6,17 @@ const live = process.env.APPGRAPH_PRIVATE_LIVE_TEST === "1";
 const configuredInput = process.env.APPGRAPH_PRIVATE_REPO;
 const token = process.env.GITHUB_TOKEN;
 
+function expectedFullName(input: string): string {
+  if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(input)) {
+    return input.toLowerCase();
+  }
+
+  const url = new URL(input);
+  const [owner, repo] = url.pathname.replace(/^\/+|\/+$/g, "").split("/");
+  if (!owner || !repo) throw new Error(`Invalid GitHub repository input: ${input}`);
+  return `${owner}/${repo.replace(/\.git$/, "")}`.toLowerCase();
+}
+
 describe.skipIf(!live)("live private GitHub ingestion", () => {
   it("analyzes a token-authorized private repository", async () => {
     if (!configuredInput) {
@@ -21,6 +32,6 @@ describe.skipIf(!live)("live private GitHub ingestion", () => {
 
     expect(document.nodes.length).toBeGreaterThan(0);
     expect(document.stats.analyzedFiles).toBeGreaterThan(0);
-    expect(document.repository.fullName.toLowerCase()).toBe("babaronlinecom/babar-online-os");
+    expect(document.repository.fullName.toLowerCase()).toBe(expectedFullName(configuredInput));
   }, 180_000);
 });
