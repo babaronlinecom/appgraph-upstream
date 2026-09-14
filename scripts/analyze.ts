@@ -1,19 +1,22 @@
 /**
- * AppGraph CLI — analyze a public GitHub repository without the UI.
+ * AppGraph CLI — analyze a GitHub repository or an already checked-out local repository.
  *
  * Usage:
  *   npm run analyze -- https://github.com/owner/repo
- *   npm run analyze -- flutter/flutter --json
- *   npm run analyze -- owner/repo --out graph.json
+ *   npm run analyze -- owner/repo --json
+ *   npm run analyze -- --local ../checked-out-repo --out graph.json
  *
  * Flags:
+ *   --local         read an existing checkout instead of GitHub
  *   --json          print a machine-readable summary to stdout
  *   --out <file>    write the full AppGraph document JSON to a file
  *   --mermaid       print a Mermaid diagram to stdout
+ *   --report <file> write a Markdown architecture report
  */
 import { writeFile } from "node:fs/promises";
 import { analyzeRepository } from "@/lib/analysis/pipeline";
 import { GitHubPublicRepositoryProvider } from "@/lib/github/github-public-provider";
+import { LocalRepositoryProvider } from "@/lib/github/local-repository-provider";
 import {
   detectCycles,
   graphHealth,
@@ -25,10 +28,13 @@ import { detectFlows } from "@/features/workspace/trace";
 function usage(): never {
   console.error(
     [
-      "AppGraph CLI — static architecture analysis for a public GitHub repository.",
+      "AppGraph CLI — deterministic static architecture analysis.",
       "",
       "Usage:",
-      "  npm run analyze -- <github-url> [--json] [--out <file.json>] [--mermaid] [--report <file.md>]",
+      "  npm run analyze -- <github-url-or-owner/repo> [flags]",
+      "  npm run analyze -- --local <checkout-path> [flags]",
+      "",
+      "Flags: --local --json --out <file.json> --mermaid --report <file.md>",
     ].join("\n"),
   );
   process.exit(1);
@@ -36,25 +42,32 @@ function usage(): never {
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  const rawInput = args.find((argument) => !argument.startsWith("--"));
-  if (!rawInput) usage();
-  const url = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(rawInput)
-    ? `https://github.com/${rawInput}`
-    : rawInput;
-
   const hasFlag = (flag: string) => args.includes(flag);
   const flagValue = (flag: string): string | undefined => {
     const index = args.indexOf(flag);
     return index >= 0 ? args[index + 1] : undefined;
   };
 
-  const provider = new GitHubPublicRepositoryProvider();
+  const valueFlags = new Set(["--out", "--report"]);
+  const rawInput = args.find((argument, index) => {
+    if (argument.startsWith("--")) return false;
+    return index === 0 || !valueFlags.has(args[index - 1]);
+  });
+  if (!rawInput) usage();
+
+  const local = hasFlag("--local");
+  const input = local
+    ? rawInput
+    : /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(rawInput)
+      ? `https://github.com/${rawInput}`
+      : rawInput;
+  const provider = local ? new LocalRepositoryProvider() : new GitHubPublicRepositoryProvider();
   const startedAt = Date.now();
   const logged = new Set<string>();
 
   const document = await analyzeRepository({
     provider,
-    input: url,
+    input,
     onMetadata: (metadata) => {
       console.error(
         `▸ ${metadata.fullName} · ${metadata.defaultBranch} · ${metadata.sizeKb} KB · ★ ${metadata.stars}`,
@@ -89,9 +102,7 @@ async function main(): Promise<void> {
   );
   if (flows.length > 0) {
     console.error("▸ key flows:");
-    for (const flow of flows.slice(0, 5)) {
-      console.error(`   ${flow.title}`);
-    }
+    for (const flow of flows.slice(0, 5)) console.error(`   ${flow.title}`);
   }
   if (cycles.length > 0) {
     console.error(`▸ circular dependencies: ${cycles.length} (use --json for details)`);
@@ -109,9 +120,7 @@ async function main(): Promise<void> {
     console.error(`▸ report written to ${reportPath}`);
   }
 
-  if (hasFlag("--mermaid")) {
-    console.log(toMermaid(document, "architecture"));
-  }
+  if (hasFlag("--mermaid")) console.log(toMermaid(document, "architecture"));
 
   if (hasFlag("--json")) {
     console.log(
